@@ -1,0 +1,11 @@
+=======================
+Econ 702 - Assigment 1 
+Menu Costs
+=======================
+
+File structure:
+- main.m runs the entire thing - it finds equilibrium wages crucially. It calls findEquilibrium.m.
+- findEquilibrium.m - finds labour market clearing error for a given wage (and aggregate Y). It calls viterFirm.m
+- viterFirm.m - runs value function iteration for a firm for a given w and aggregate Y (and model parameters). 
+Returns the final value functions and policy functions.
+- testgraphs.m - runs some graphs meant for visual inspection of the policy functions, value functions and distributions
