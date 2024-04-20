@@ -52,4 +52,4 @@ pdist = sum(omega, dims=2)
 plot!(p.pgrid, pdist)
 
 
-w, Y, V, polp, pollamb,  omega, omegahat = findEquilibrium(p, winit=p.w_flex, Yinit=p.Y_flex)
+w, Y, V, polp, pollamb, omega, omegahat, iter, error = findEquilibrium(p, winit=p.w_flex, Yinit=p.Y_flex)

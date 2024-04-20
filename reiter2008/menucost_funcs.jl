@@ -193,17 +193,15 @@ end
 #==
 For a given w, get back labour market error
 ==#
-function findEquilibrium(p; winit=1, tolw=1e-3, max_witer=100, deltaw=0.3,
-                            Yinit=1, tolY=1e-3, max_yiter=100, deltaY=0.3,
+function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
+                            Yinit=1, deltaY=0.1,
                             printinterval=10)
 
     # gettngg value funcion
     w0 = winit;
     Y0 = Yinit;
-    iterw = 0;
-    iterY = 0;
-    errorw = 10;
-    errorY = 10;
+    iter = 0;
+    error = 10
 
     # preallocating
     V = zeros(p.np, p.na)
@@ -213,74 +211,58 @@ function findEquilibrium(p; winit=1, tolw=1e-3, max_witer=100, deltaw=0.3,
     omegahat = zeros(p.np, p.na)
 
     # outer labour market loop
-    while iterw < max_witer && errorw > tolw
+    while iter < max_iter && error > tol
 
+        agg = (w=w0, Y=Y0);
+        V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
 
-        # inner output loop
-        while iterY < max_yiter && errorY > tolY
+        # get joint distribution of prices and shocks
+        omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
+        pdist = sum(omegahat, dims=2)
 
-            agg = (w=w0, Y=Y0);
-            V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
-
-            # get joint distribution of prices and shocks
-            omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
-            pdist = sum(omegahat, dims=2)
-
-            # get implied aggregate Y
-            # pdecis = (pollamb .* p.pgrid[polp]) + (.!pollamb .* repeat(p.pgrid, 1, p.na))
-            Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
-
-            errorY = abs(Yimplied - Y0);
-
-            iterY += 1;
-
-            Y1 = (1-deltaY) * Y0 + deltaY * Yimplied;
-            Y0 = Y1
-
-            if iterY == 1 || mod(iterY, printinterval) == 0
-                println("Iterations: $iterY, Error Y: $errorY")
-            end
-        end
-
-        println("Final aggregate Y: $Y0")
-
-        if iterY == max_yiter
-            fprintf("Warning, maximum iterations reached for output. May not have converged\n")
-        end
+        # get implied aggregate Y
+        Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
 
         # get profits to give HH
         # get aggregate fixed cost payments
         # get labour demand
         # integrate
-        Pi = 0
         Ld = 0
+        F = 0
         for pidx = 1:p.np
             for aidx = 1:p.na
                 pval = p.pgrid[pidx]
                 aval = p.agrid[aidx]
-                Pi += pval^(1-p.ϵ) - pval^(-p.ϵ) * (w0/exp(aval)) * omega[pidx, aidx]
+                F += p.κ * pollamb[pidx, aidx] .* omegahat[pidx, aidx] # who adjusts in a period
                 Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * omega[pidx,aidx]
             end
         end
-        @show Pi
+        @show F
         @show Ld
 
-        w_consumer(x) = x/(x*Ld + Pi) - p.ζ*Ld^(1/p.ν)
-        w_implied = find_zero(w_consumer, 1.0);
+        C = Yimplied - F
+        w_implied = p.ζ * Ld^(1/p.ν) * C
 
-
+        # updating guesses
+        errorY = abs(Yimplied - Y0)
         errorw = abs(w0 - w_implied)
-        iterw += 1
+        # error = max(errorY, errorw)
+        error = errorY
+
+        Y1 = (1-deltaY) * Y0 + deltaY * Yimplied;
         w1 = (1-deltaw) * w0 + deltaw * w_implied;
-
-        if iterw == 1 || mod(iter, printinterval) == 0
-            println("Iterations: $iterw, Error w: $errorw, W guess: $w1")
-        end
-
+        Y0 = Y1
         w0 = w1
 
+        iter += 1
+
+        if iter == 1 || mod(iter, printinterval) == 0
+            println("Iterations: $iter")
+            println("Error w: $errorw, W guess: $w0")
+            println("Error Y: $errorY, Y guess: $Y0")
+        end
 
     end
 
-    return w0, Y0, V, polp, pollamb,  omega, omegahat
+    return w0, Y0, V, polp, pollamb,  omega, omegahat, iter, error
 end
