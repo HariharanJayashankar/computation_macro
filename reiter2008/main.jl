@@ -30,14 +30,15 @@ params = @with_kw (
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
     pss = log.(pflex),
-    pgrid = range(0.5*pflex, 2*pflex, length=np)
-    # pgrid = exp.(range(0.5*pss, 3*pss, length=np)) # log spaced grid
+    pgrid = range(0.5*pflex, 2*pflex, length=np),
+    ρ_agg = 0.9
 )
 p = params()
 
 @time viterFirm((w=p.w_flex, Y=1), p)
 @profview viterFirm((w=p.w_flex, Y=p.Y_flex), p)
 vout, vadjust, vnoadjust, polpout, pollambdaout, iter, error = viterFirm((w=p.w_flex, Y=4), p)
+vout, vadjust, vnoadjust, polpout, pollambdaout, iter, error = vBackwardFirm((w=p.w_flex, Y=4), p, vout)
 
 heatmap(vout)
 heatmap(polpout)
@@ -52,4 +53,6 @@ pdist = sum(omega, dims=2)
 plot!(p.pgrid, pdist)
 
 
-w, Y, V, polp, pollamb, omega, omegahat, iter, error = findEquilibrium(p, winit=p.w_flex, Yinit=p.Y_flex)
+w, Y, V, polp, pollamb, omega, omegahat, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
+
+# 

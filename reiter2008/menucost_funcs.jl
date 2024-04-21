@@ -131,48 +131,98 @@ function  viterFirm(agg, params; maxiter=10000, tol=1e-6, printinterval=1000, pr
 
 end
 
+#==
+Backward induction of V - for when we know tomorrow's value function 
+==#
+function  vBackwardFirm(agg, params, v1; maxiter=10000, tol=1e-6, printinterval=1000, printinfo=true)
+
+
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
+
+    # preallocate profit matrix
+    profit_mat = zeros(params.np, params.na);
+    for pidx=1:np
+        for aidx=1:na
+            pval = params.pgrid[pidx];
+            aval = params.agrid[aidx];
+            profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
+        end
+    end
+
+    error = 10;
+    iter = 0;
+
+
+    ev1 = v1 * aP';
+
+    # iterate over choices
+    vnoadjust = profit_mat + β * ev1
+    vadjust_val = profit_mat .- κ +  β * ev1
+    vadjustmax, pstar = findmax(vadjust_val, dims=1)
+
+    vadjust = repeat(vadjustmax, np, 1)
+
+    pollamb = vadjust .> vnoadjust
+    vout = max.(vadjust, vnoadjust)
+
+    polp = getindex.(pstar, 1)
+    polp = repeat(polp, np, 1)
+
+    return vout, vadjust, vnoadjust, polp, pollamb, iter, error
+
+end
+
+#==
+Make transition function for distribution of (p,a)
+Given the policy functions for price changes
+==#
+function Tfunc(omega0hat, polp, pollamb, params)
+
+    omega1 = zeros(params.np, params.na);
+    aP = params.aP
+
+    for pidx = 1:params.np
+        for aidx = 1:params.na
+            
+            p1idx = polp[pidx, aidx];
+
+            # non adjusters
+            omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega0hat[pidx, aidx];
+            
+            # adjusters
+            omega1[p1idx, aidx] = omega1[p1idx, aidx] + pollamb[pidx, aidx] * omega0hat[pidx, aidx];
+        end
+    end
+
+    # update shock dist
+    omega1hat = zeros(params.np, params.na);
+
+    for pidx = 1:params.np
+        for aidx = 1:params.na
+
+            for a0idx = 1:params.na
+                omega1hat[pidx, aidx] = omega1hat[pidx, aidx] + omega1[pidx, a0idx] * aP[a0idx, aidx];
+            end
+        end
+    end
+    return omega1, omega1hat
+
+end
+
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
-    aP = params.aP;
 
-    omega0hat = ones(params.np, params.na);
-    omega0hat = omega0hat ./ (params.np*params.na);
+    omega1hat = ones(params.np, params.na);
+    omega1hat = omega1hat ./ (params.np*params.na);
     omega1 = zeros(params.np, params.na);
     error = 10;
     iter = 0;
     
     while (error > tol) && (iter < maxiter)
 
-        # update p dist
-        omega1 = zeros(params.np, params.na);
-
-        for pidx = 1:params.np
-            for aidx = 1:params.na
-                
-                p1idx = polp[pidx, aidx];
-
-                # non adjusters
-                omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega0hat[pidx, aidx];
-                
-                # adjusters
-                omega1[p1idx, aidx] = omega1[p1idx, aidx] + pollamb[pidx, aidx] * omega0hat[pidx, aidx];
-            end
-        end
-        
-        # update shock dist
-        omega1hat = zeros(params.np, params.na);
-
-        for pidx = 1:params.np
-            for aidx = 1:params.na
-
-                for a0idx = 1:params.na
-                    omega1hat[pidx, aidx] = omega1hat[pidx, aidx] + omega1[pidx, a0idx] * aP[a0idx, aidx];
-                end
-           end
-        end
-
+        omega0hat = omega1hat
+        omega1, omega1hat = Tfunc(omega0hat, polp, pollamb, params)
         error = maximum(abs.(omega1hat - omega0hat))
-        # error = maximum(abs.(log.(1 .+ omega1hat) .- log.(1 .+ omega0hat)));
         iter += 1;
         omega0hat = omega1hat;
 
@@ -186,14 +236,14 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         println("Final Iterations: $iter, Final error: $error")
     end
 
-    return omega0hat, omega1
+    return omega1hat, omega1
 
 end
 
 #==
-For a given w, get back labour market error
+Find equilibiurm Y and w to clear steady state
 ==#
-function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
+function findEquilibrium_ss(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
                             Yinit=1, deltaY=0.1,
                             printinterval=10)
 
@@ -218,7 +268,7 @@ function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
 
         # get joint distribution of prices and shocks
         omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
-        pdist = sum(omegahat, dims=2)
+        pdist = sum(omega, dims=2)
 
         # get implied aggregate Y
         Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
@@ -237,8 +287,6 @@ function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
                 Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * omega[pidx,aidx]
             end
         end
-        @show F
-        @show Ld
 
         C = Yimplied - F
         w_implied = p.ζ * Ld^(1/p.ν) * C
@@ -246,8 +294,8 @@ function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
         # updating guesses
         errorY = abs(Yimplied - Y0)
         errorw = abs(w0 - w_implied)
-        # error = max(errorY, errorw)
-        error = errorY
+        error = max(errorY, errorw)
+        # error = errorY
 
         Y1 = (1-deltaY) * Y0 + deltaY * Yimplied;
         w1 = (1-deltaw) * w0 + deltaw * w_implied;
@@ -265,4 +313,115 @@ function findEquilibrium(p; winit=1, tol=1e-3, max_iter=100, deltaw=0.1,
     end
 
     return w0, Y0, V, polp, pollamb,  omega, omegahat, iter, error
+end
+
+# Solving using Reiter 2009
+
+#==
+Residual equations which equal 0 at equilibrium
+Xl is lagged value of variables
+X is current value of variables
+The variables are:
+- each bin of (p,a) to track distribution - stacked as a vector, size np * na
+- w
+- r
+- Y
+- C
+- Z (aggregate shock)
+- Ey
+- Ew
+- EMu(C) - expected marginal utility
+
+A lot of it is rewriting the findEquilibrium_ss function
+but without iterating till steady state for the distribution
+Note r and C are added in compared to steady state since
+the euler equation has to hold in equilibrium outside
+SS now
+Last three are needed to solve todays value function
+
+==#
+function residequations(Xl, X, η, ϵ, p)
+    
+    @unpack np, na = p
+
+    sizedist = np * na
+
+    # unpacking
+    omegahat_l = reshape(Xl[1:sizedist], np, na)
+    omegahat = reshape(X[1:sizedist], np, na)
+    wl, rl, Yl, Cl, Zl, Eyl, Ewl, EMU = Xl[(sizedist+1):end]
+    w, r, Y, C, Z, Ey, Ew, Emu = X[(sizedist+1):end]
+
+    # only one shock - tfp shock
+    ϵ = ϵ[1]
+
+    # store for reuse
+    agrid_orig = p.agrid
+
+    # need to add stochastic discount factors to value function iterations
+    # future V
+    p.agrid = agrid_orig .* p.ρ_agg .* log(Z)
+    V1, Vadjust1, Vnoadjust1, polp1, pollamb1 = viterFirm((w=Ew, Y=Ey), p;
+                                        maxiter=10000, tol=1e-6, printinfo=false)
+    # current V by backward induction
+    p.agrid = agrid_orig .* log(Z)
+    V, Vadjust, Vnoadjust, polp, pollamb = vBackwardFirm((w=w, Y=Y), p, V1;
+                                        maxiter=10000, tol=1e-6, printinfo=false)
+    omega1hat, omega1 = Tfunc(omegahat_l, polp, pollamb, p)
+    pdist = sum(omega1, dims=2)
+
+    # get implied aggregate Y
+    Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
+
+    # get profits to give HH
+    # get aggregate fixed cost payments
+    # get labour demand
+    # integrate
+    Ld = 0
+    F = 0
+    for pidx = 1:p.np
+        for aidx = 1:p.na
+            pval = p.pgrid[pidx]
+            aval = p.agrid[aidx]
+            F += p.κ * pollamb[pidx, aidx] .* omegahat[pidx, aidx] # who adjusts in a period
+            Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * omega[pidx,aidx]
+        end
+    end
+
+    cerror = C -  Yimplied - F
+    w_implied = p.ζ * Ld^(1/p.ν) * C
+    
+    euler_error  = (1/C) - (1+r)*p.β*Emu
+
+    # == residual vector == #
+    residvector = zeros(np*na + 2, 1)
+
+    # dist error
+    omegahat_flat_in = X[1:sizedist]
+    omegahat_flat_implied = vec(omega1hat)
+    residvector[1:sizedist] = omegahat_flat_in - omegahat_flat_implied
+
+    # other error
+    residvector[(sizedist+1):(end-1)] = [Y-Ymplied, w-w_implied]
+    residvector[end] = log(Z) - p.ρ_agg * log(Zl) - ϵ
+
+    return residvector
+    
+end
+
+#==
+Linarizeed coefficients
+==#
+function linearized_coeffs(equations, xss, shocks_sd, fargs)
+
+    shocks_sd = atleast_2d(shocks_sd)
+    shocks_ss = zero(shocks_sd)
+
+    H1 = ForwardDiff.jacobian(t -> equations(t, xss, xss, shocks_ss, shocks_sd, fargs...), xss)
+    H2 = ForwardDiff.jacobian(t -> equations(xss, t, xss, shocks_ss, shocks_sd, fargs...), xss)
+    H3 = ForwardDiff.jacobian(t -> equations(xss, xss, t, shocks_ss, shocks_sd, fargs...), xss)
+    H4 = ForwardDiff.jacobian(t -> equations(xss, xss, xss, t, shocks_sd, fargs...), shocks_ss)
+
+    return H1, H2, H3, H4
+
 end

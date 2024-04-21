@@ -1,2 +1,6 @@
 # Menu Costs
 
+TODO:
+- Add stochastic discount factor to viter and residequations function
+- Make expected future variables and current variabvles  + expectations error 
+  part of residequations
