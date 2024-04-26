@@ -1,6 +1,8 @@
 using  Plots
+using JLD2
 
 include("menucost_funcs.jl")
+include("gensysdt.jl")
 
 
 params = @with_kw (
@@ -53,31 +55,38 @@ plot!(p.pgrid, pdist)
 
 # equilibrium
 w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
+Vout = max.(Vadjust, Vnoadjust)
 
 
 # testing reiter resid
 sizedist = p.na * p.np
 xss = [
-    vec(omegahat)...,
     vec(omega)...,
-    vec(Vadjust)...,
-    vec(Vnoadjust)...,
+    vec(Vout)...,
     log(w),
     log(p.iss),
     log(Y),
     log(C),
-    0.0,
-    0.0
+    1e-9,
+    1e-9,
+    1e-9
 ]
-ηss = zeros(2*sizedist+2)
+droptol!(xss, 1e-10)
+ηss = zeros(sizedist+2)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p)
-H1 = ForwardDiff.jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
+# H1 = ForwardDiff.jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
 # H2 = ForwardDiff.jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, params), xss)
 # H3 = ForwardDiff.jacobian(t -> residequations(xss, xss, t,  ϵ_ss, params), η_ss)
 # H4 = ForwardDiff.jacobian(t -> residequations(xss, xss, ηss, t,  params), ϵ_ss)
-H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, params), xss)
-H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, params), xss)
-H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, params), ηss)
-H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, params), ϵ_ss)
+H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
+H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
+H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
+H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
+jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
+H1 = collect(H1)
+H2 = collect(H2)
+H3 = collect(H3)
+H4 = collect(H4)
+G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4);

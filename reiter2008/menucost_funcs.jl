@@ -3,6 +3,7 @@ using Interpolations
 using ForwardDiff
 using FiniteDifferences
 using FiniteDiff
+using SparseArrays, SparsityDetection
 
 # find stationary distribution
 # of markov process characterized by
@@ -147,17 +148,17 @@ end
 #==
 Backward induction of V - for when we know tomorrow's value function 
 ==#
-function  vBackwardFirm(agg, params, Z::AbstractVector{T}, v1::AbstractVector{T}; 
+function  vBackwardFirm(agg, params, Z, v1; 
                         stochdiscfactor = 1.0,
                         maxiter=10000, tol=1e-6, 
-                        printinterval=1000, printinfo=true) where T
+                        printinterval=1000, printinfo=true)
 
 
     @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
     
 
     # preallocate profit matrix
-    profit_mat = eltype(Z)zeros(params.np, params.na);
+    profit_mat = zeros(params.np, params.na);
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
@@ -223,6 +224,10 @@ function Tfunc(omega0, polp, pollamb, params)
         end
     end
 
+    # omega1 = sparse(omega1)
+    # omega1hat  = sparse(omega1hat)
+    # droptol!(omega1, 1e-10)
+    # droptol!(omega1hat, 1e-10)
     return omega1, omega1hat
 
 end
@@ -288,7 +293,6 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid)
         end
     end
 
-    return omega1, omega1hat 
 end
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
@@ -297,6 +301,8 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     omega1 = ones(params.np, params.na);
     omega1 = omega1 ./ (params.np*params.na);
     omega1hat = zeros(params.np, params.na);
+    # omega1 = sparse(omega1)
+    # omega1hat = sparse(omega1hat)
     error = 10;
     iter = 0;
     
@@ -425,8 +431,8 @@ SS now
 Last three are needed to solve todays value function
 
 ==#
-function residequations(Xl::AbstractArray{T}, X::AbstractVector{T}, 
-                η::AbstractVector{T}, ϵ::AbstractVector{T}, 
+function residequations(Xl, X, 
+                η, ϵ, 
                 p)
     
     # default params
@@ -435,40 +441,28 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
     sizedist = np * na
 
     # unpacking
-    omegahat_l = reshape(Xl[1:sizedist], np, na)
-    omegahat = reshape(X[1:sizedist], np, na)
-    omega_l = reshape(Xl[(sizedist+1):(2*sizedist)], np, na)
-    omega = reshape(X[(sizedist+1):(2*sizedist)], np, na)
+    omega_l = reshape(Xl[1:sizedist], np, na)
+    omega = reshape(X[1:sizedist], np, na)
 
-    Vadj_l = reshape(Xl[(2*sizedist+1):(3*sizedist)], np, na)
-    Vadj = reshape(X[(2*sizedist+1):(3*sizedist)], np, na)
-
-    Vnoadj_l = reshape(Xl[(3*sizedist+1):(4*sizedist)], np, na)
-    Vnoadj = reshape(X[(3*sizedist+1):(4*sizedist)], np, na)
-    @show eltype(Vadj_l)
-
+    V_l = reshape(Xl[(sizedist+1):(2*sizedist)], np, na)
+    V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
 
     # need to rewrite this opening to accomodate vectors for V, polp, etc
-    wl, rl, Yl, Cl, Zl  = exp.(Xl[(4*sizedist+1):(end-1)])
-    w, r, Y, C, Z  = exp.(X[(4*sizedist+1):(end-1)])
+    wl, rl, Yl, Cl, Zl, Zmonl  = exp.(Xl[(2*sizedist+1):(end-1)])
+    w, r, Y, C, Z, Zmon  = exp.(X[(2*sizedist+1):(end-1)])
     infl_l = Xl[end]
     infl = X[end]
 
-    # 2 shocks - tfp and monetary
-    ϵ_tfp = ϵ[1]
-    ϵ_ngdp = ϵ[2]
 
     # expectation errors
-    ηvadj = reshape(η[1:sizedist], np, na)
-    ηvnoadj = reshape(η[(sizedist+1):(2*sizedist)], np, na)
-    η_stoch, η_ee = η[(2*sizedist + 1):end]
+    ηv = reshape(η[1:sizedist], np, na)
+    η_stoch, η_ee = η[(1*sizedist + 1):end]
 
     stochdiscfactor = Cl/C + η_stoch
 
     #==
     Compute Value functions given optimal adjusting price rule
     ==#
-    Vout = max.(Vadj, Vnoadj)
     # Vout_int = cubic_spline_interpolation((pgrid_orig, agrid_orig), Vout)
     # Vadj_l_check = zeros(p.np, p.na)
     # flowprofit = zeros(p.na)
@@ -479,10 +473,10 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
     # end
 
     # calculate implied polp
-    vout_l, Vadj_l_check, Vnadj_l_check, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
-        (Y=Yl, w=wl), p, Zl, Vout, stochdiscfactor = stochdiscfactor
+    V_l_check, Vadj_l, Vnoadj_l, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
+        (Y=Yl, w=wl), p, Zl, V, stochdiscfactor = stochdiscfactor
     )
-    polp_l_val_check = p.pgrid[polp_l_check]
+    V_l_check += ηv
 
 
     # store v adjust check
@@ -499,7 +493,6 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
     #         Vadj_l_check[pidx, aidx] = flowprofit[aidx] + β*stochdiscfactor*Ex
     #     end
     # end
-    Vadj_l_check += ηvadj
 
     # store v noadjust check
     # Vnadj_l_check = zeros(p.np, p.na)
@@ -517,7 +510,6 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
     #         Vnadj_l_check[pidx, aidx] = val + β*stochdiscfactor*Ex
     #     end
     # end
-    Vnadj_l_check += ηvnoadj
 
     pollamb = Vadj_l .> Vnoadj_l
 
@@ -540,13 +532,14 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
             aval = Zl * p.agrid[aidx]
-            F += p.κ * pollamb[pidx, aidx] .* omegahat[pidx, aidx] # who adjusts in a period
-            Ld += pval^(-p.ϵ) * exp(-aval) * Yl * omega[pidx,aidx]
+            F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
+            Ld += pval^(-p.ϵ) * exp(-aval) * Yl * omega1[pidx,aidx]
         end
     end
 
     # monetary policy
-    mon_pol_error = infl - log(Yl) + log(Y) - ϵ[2]
+    mon_pol_error = infl - log(Yl) + log(Y) - Zmon
+    Zmonerror = log(Zmon) - p.ρ_agg * log(Zmonl) - ϵ[2]
 
     cerror = C - Yimplied - F
     w_implied = p.ζ * Ld^(1/p.ν) * C
@@ -556,17 +549,19 @@ function residequations(Xl::AbstractArray{T}, X::AbstractVector{T},
 
     # == residual vector == #
     residvector = zero(X)
-    residvector[1:sizedist] = vec(omega1hat - omegahat)
-    residvector[(sizedist+1):(2*sizedist)] = vec(omega1 - omega)
-    residvector[(2*sizedist+1):(3*sizedist)] = vec(Vadj_l_check - Vadj_l)
-    residvector[(3*sizedist+1):(4*sizedist)] = vec(Vnadj_l_check - Vnoadj_l)
+    residvector[1:sizedist] = vec(omega1 - omega)
+    residvector[(sizedist+1):(2*sizedist)] = vec(V_l_check - V_l)
 
 
     # other error
-    residvector[(4*sizedist+1):end] = [wl-w_implied,Yl-Yimplied,
+    residvector[(2*sizedist+1):end] = [wl-w_implied,Yl-Yimplied,
                                         euler_error,cerror,
                                         mon_pol_error,
+                                        Zmonerror,
                                         zerror]
+
+    residvector = sparse(residvector)
+    droptol!(residvector, 1e-10)
      
     return residvector
     
