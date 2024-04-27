@@ -4,6 +4,8 @@ using JLD2
 include("menucost_funcs.jl")
 include("gensysdt.jl")
 
+# read jacobians
+read_jacob = true
 
 params = @with_kw (
     β = 0.97^(1/12),
@@ -71,22 +73,81 @@ xss = [
     1e-9,
     1e-9
 ]
-droptol!(xss, 1e-10)
+# droptol!(xss, 1e-10)
 ηss = zeros(sizedist+2)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p)
-# H1 = ForwardDiff.jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
-# H2 = ForwardDiff.jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, params), xss)
-# H3 = ForwardDiff.jacobian(t -> residequations(xss, xss, t,  ϵ_ss, params), η_ss)
-# H4 = ForwardDiff.jacobian(t -> residequations(xss, xss, ηss, t,  params), ϵ_ss)
-H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
-H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
-H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
-H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
-jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
-H1 = collect(H1)
-H2 = collect(H2)
-H3 = collect(H3)
-H4 = collect(H4)
+if !read_jacob
+    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
+    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
+    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
+    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
+    jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
+else
+    println("Reading Jacobians...")
+    H1, H2, H3, H4 = load("solnmatrices.jld2", H1, H2, H3, H4)
+    H1 = collect(H1)
+    H2 = collect(H2)
+    H3 = collect(H3)
+    H4 = collect(H4)
+end
+
+println("Running Gensys")
 G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4);
+
+
+println("Making plots...")
+# ==  plot IRFS == #
+Tirf = 40
+
+# TFP SHOCK
+ϵ_tfp_irf = zeros(2, Tirf)
+ϵ_tfp_irf[1, 1] = 0.01 # shock value for tfp
+irf = zeros(size(xss, 1), Tirf)
+for t=1:Tirf
+    if t == 1
+        # everything is deviations from ss 
+        irf[:, t] = impact *  ϵ_tfp_irf
+    else
+        irf[:, t] = G1 * irf[:, t-1]
+    end
+end
+
+wirf, rirf, Yirf, Cirf, Zirf, Zmonirf  = exp.(irf[(2*sizedist+1):(end-1), :])
+infl_irf = irf[end, :]
+
+pw = plot(1:Tirf, wirf, title="Wage")
+pr = plot(1:Tirf, rirf, title="Interest Rate")
+pY = plot(1:Tirf, Yirf, title="Output")
+pC = plot(1:Tirf, Cirf, title="Consumption")
+pZ = plot(1:Tirf, Zirf, title="TFP")
+pZmon = plot(1:Tirf, Zmonirf, title="Monetary Policy")
+pinfl = plot(1:Tirf, inflirf, title="Inflation")
+plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
+savefig("tfp_shock.png")
+
+# monetary policy SHOCK
+ϵ_mon_irf = zeros(2, Tirf)
+ϵ_mon_irf[2, 1] = 0.01 # shock value for tfp
+irf = zeros(size(xss, 1), Tirf)
+for t=1:Tirf
+    if t == 1
+        irf[:, t] = impact *  ϵ_mon_irf
+    else
+        irf[:, t] = G1 * irf[:, t-1]
+    end
+end
+
+wirf, rirf, Yirf, Cirf, Zirf, Zmonirf  = exp.(irf[(2*sizedist+1):(end-1), :])
+infl_irf = irf[end, :]
+
+pw = plot(1:Tirf, wirf, title="Wage")
+pr = plot(1:Tirf, rirf, title="Interest Rate")
+pY = plot(1:Tirf, Yirf, title="Output")
+pC = plot(1:Tirf, Cirf, title="Consumption")
+pZ = plot(1:Tirf, Zirf, title="TFP")
+pZmon = plot(1:Tirf, Zmonirf, title="Monetary Policy")
+pinfl = plot(1:Tirf, inflirf, title="Inflation")
+plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
+savefig("mon_shock.png")
