@@ -94,7 +94,7 @@ else
 end
 
 println("Running Gensys")
-G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4);
+G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4)
 
 
 println("Making plots...")
