@@ -1,8 +1,8 @@
 using  Plots
 using JLD2
+using lti
 
 include("menucost_funcs.jl")
-include("gensysdt.jl")
 
 # read jacobians
 read_jacob = true
@@ -77,12 +77,12 @@ xss = [
 ηss = zeros(sizedist+2)
 ϵ_ss = zeros(2)
 
-Fout = residequations_lti(xss, xss, xss, ϵ_ss, p)
+Fout = residequations(xss, xss, ηss, ϵ_ss, p)
 if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(t, xss,  xss, ϵ_ss, p), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, t,  xss, ϵ_ss, p), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss,  t, ϵ_ss, p), xss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss,  xss, t, p), ϵ_ss)
+    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
+    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
+    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
+    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
     jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
 else
     println("Reading Jacobians...")
@@ -93,7 +93,9 @@ else
     H4 = collect(H4)
 end
 
-F0, Q, emessage = lti.solve_system(H1, H2, H3, H4)
+println("Running Gensys")
+G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4)
+
 
 println("Making plots...")
 # ==  plot IRFS == #

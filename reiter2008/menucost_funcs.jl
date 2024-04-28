@@ -568,6 +568,116 @@ function residequations(Xl, X,
 end
 
 #==
+Residual equations which equal 0 at equilibrium
+Made for linear time iterations
+Xl is lagged value of variables
+X is current value of variables
+Xf is future (expected) value of variables
+The variables are:
+- each bin of (p,a) to track distribution - stacked as a vector, size np * na
+- w
+- r
+- Y
+- C
+- Z (aggregate shock)
+- Ey
+- Ew
+- EMu(C) - expected marginal utility
+- V - value functions
+
+A lot of it is rewriting the findEquilibrium_ss function
+but without iterating till steady state for the distribution
+Note r and C are added in compared to steady state since
+the euler equation has to hold in equilibrium outside
+SS now
+Last three are needed to solve todays value function
+
+==#
+function residequations_lti(Xl, X, Xf, ϵ, p)
+    
+    # default params
+    @unpack np, na = p
+
+    sizedist = np * na
+
+    # unpacking
+    omega_l = reshape(Xl[1:sizedist], np, na)
+    omega = reshape(X[1:sizedist], np, na)
+    omegaf = reshape(Xf[1:sizedist], np, na)
+
+    V_l = reshape(Xl[(sizedist+1):(2*sizedist)], np, na)
+    V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
+    V_f = reshape(Xf[(sizedist+1):(2*sizedist)], np, na)
+
+    # need to rewrite this opening to accomodate vectors for V, polp, etc
+    wl, rl, Yl, Cl, Zl  = exp.(Xl[(2*sizedist+1):(end-2)])
+    w, r, Y, C, Z = exp.(X[(2*sizedist+1):(end-2)])
+    wf, rf, Yf, Cf, Zf  = exp.(Xf[(2*sizedist+1):(end-2)])
+    Zmonl, infl_l = Xl[(end-1):end]
+    Zmon, infl = X[(end-1):end]
+    Zmonf, infl_f = Xf[(end-1):end]
+
+    stochdiscfactor = C/Cf
+
+    #==
+    Compute Value functions given optimal adjusting price rule
+    ==#
+    # calculate implied polp
+    V_check, Vadj, Vnoadj, polp_check, pollamb, _, _ = vBackwardFirm(
+        (Y=Y, w=w), p, Z, V_f, stochdiscfactor = stochdiscfactor
+    )
+
+    #==
+    Compute Distribution checks
+    ==#
+    omega1, omega1hat = Tfunc(omega, polp_check, pollamb, p)
+    pdist = sum(omega1, dims=2)
+
+    # get implied aggregate Y
+    Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
+
+    # get profits to give HH
+    # get aggregate fixed cost payments
+    # get labour demand
+    # integrate
+    Ld = 0
+    F = 0
+    for pidx = 1:p.np
+        for aidx = 1:p.na
+            pval = p.pgrid[pidx]
+            aval = Zl * p.agrid[aidx]
+            F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
+            Ld += pval^(-p.ϵ) * exp(-aval) * Yl * omega1[pidx,aidx]
+        end
+    end
+
+    # monetary policy
+    mon_pol_error = infl - log(Yl) + log(Y) - Zmon
+    Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
+
+    cerror = C - Yimplied - F
+    w_implied = p.ζ * Ld^(1/p.ν) * C
+    euler_error  = (1/C) - (1+rf)*p.β*1/(Cf)
+    zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
+
+    # == residual vector == #
+    residvector = zero(X)
+    residvector[1:sizedist] = vec(omega1 - omegaf)
+    residvector[(sizedist+1):(2*sizedist)] = vec(V_check - V)
+
+
+    # other error
+    residvector[(2*sizedist+1):end] = [w-w_implied,Y-Yimplied,
+                                        euler_error,cerror,
+                                        mon_pol_error,
+                                        Zmonerror,
+                                        zerror]
+
+    return residvector
+    
+end
+
+#==
 Linarizeed coefficients
 ==#
 function linearized_coeffs(equations, xss, shocks_sd, fargs)
