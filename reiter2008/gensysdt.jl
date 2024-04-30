@@ -128,7 +128,7 @@ function gensysdt(F::LinearAlgebra.GeneralizedSchur, c, Ψ, Π, div)
     if unique
         eu[2] = 1
     else
-        info("Indeterminacy. $(nloose) loose endogeneous errors")
+        @info "Indeterminacy. $(nloose) loose endogeneous errors"
     end
 
     tmat = hcat(I(n - nunstab), -(ueta * (deta \ veta') * veta1 * (deta1 * ueta1'))')

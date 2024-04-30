@@ -1,11 +1,12 @@
 using  Plots
 using JLD2
+using lti
 
 include("menucost_funcs.jl")
 include("gensysdt.jl")
 
 # read jacobians
-read_jacob = true
+read_jacob = false
 
 params = @with_kw (
     β = 0.97^(1/12),
@@ -19,8 +20,8 @@ params = @with_kw (
     iss = 1.0/β - 1.0,
     # otehr parameters (numeric mostly)
     m =  3, # tauchen grid distance
-    na = 50, #number of grids in shock
-    np = 500, # number of price grids
+    na = 10, #number of grids in shock
+    np = 200, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
     shock = tauchen(na, ρ, σ, 0.0, m),
@@ -73,16 +74,15 @@ xss = [
     1e-9,
     1e-9
 ]
-# droptol!(xss, 1e-10)
-ηss = zeros(sizedist+2)
+ηss = zeros(1*sizedist)
 ϵ_ss = zeros(2)
 
-Fout = residequations_lti(xss, xss, xss, ϵ_ss, p)
+Fout = residequations(xss, xss, ηss, ϵ_ss, p)
 if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(t, xss,  xss, ϵ_ss, p), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, t,  xss, ϵ_ss, p), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss,  t, ϵ_ss, p), xss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss,  xss, t, p), ϵ_ss)
+    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
+    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
+    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
+    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
     jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
 else
     println("Reading Jacobians...")
@@ -93,7 +93,9 @@ else
     H4 = collect(H4)
 end
 
-F0, Q, emessage = lti.solve_system(H1, H2, H3, H4)
+println("Running Gensys")
+G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(xss,1)), H4, H3)
+
 
 println("Making plots...")
 # ==  plot IRFS == #
@@ -101,51 +103,51 @@ Tirf = 40
 
 # TFP SHOCK
 ϵ_tfp_irf = zeros(2, Tirf)
-ϵ_tfp_irf[1, 1] = 0.01 # shock value for tfp
+ϵ_tfp_irf[1, 1] = 0.1 # shock value for tfp
 irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
         # everything is deviations from ss 
-        irf[:, t] = impact *  ϵ_tfp_irf
+        irf[:, t] = impact *  ϵ_tfp_irf[:, 1]
     else
         irf[:, t] = G1 * irf[:, t-1]
     end
 end
 
-wirf, rirf, Yirf, Cirf, Zirf, Zmonirf  = exp.(irf[(2*sizedist+1):(end-1), :])
-infl_irf = irf[end, :]
+irf_vars = exp.(irf[(2*sizedist+1):(end-2), :])
+irf_vars = vcat(irf_vars, irf[(end-1):end, :])
 
-pw = plot(1:Tirf, wirf, title="Wage")
-pr = plot(1:Tirf, rirf, title="Interest Rate")
-pY = plot(1:Tirf, Yirf, title="Output")
-pC = plot(1:Tirf, Cirf, title="Consumption")
-pZ = plot(1:Tirf, Zirf, title="TFP")
-pZmon = plot(1:Tirf, Zmonirf, title="Monetary Policy")
-pinfl = plot(1:Tirf, inflirf, title="Inflation")
+pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
+pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
+pY = plot(1:Tirf, irf_vars[3, :], title="Output")
+pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
+pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
+pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
+pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
 plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
 savefig("tfp_shock.png")
 
 # monetary policy SHOCK
 ϵ_mon_irf = zeros(2, Tirf)
-ϵ_mon_irf[2, 1] = 0.01 # shock value for tfp
+ϵ_mon_irf[2, 1] = 0.01 # shock value
 irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
-        irf[:, t] = impact *  ϵ_mon_irf
+        irf[:, t] = impact *  ϵ_mon_irf[:, 1]
     else
         irf[:, t] = G1 * irf[:, t-1]
     end
 end
 
-wirf, rirf, Yirf, Cirf, Zirf, Zmonirf  = exp.(irf[(2*sizedist+1):(end-1), :])
-infl_irf = irf[end, :]
+irf_vars = exp.(irf[(2*sizedist+1):(end-2), :])
+irf_vars = vcat(irf_vars, irf[(end-1):end, :])
 
-pw = plot(1:Tirf, wirf, title="Wage")
-pr = plot(1:Tirf, rirf, title="Interest Rate")
-pY = plot(1:Tirf, Yirf, title="Output")
-pC = plot(1:Tirf, Cirf, title="Consumption")
-pZ = plot(1:Tirf, Zirf, title="TFP")
-pZmon = plot(1:Tirf, Zmonirf, title="Monetary Policy")
-pinfl = plot(1:Tirf, inflirf, title="Inflation")
+pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
+pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
+pY = plot(1:Tirf, irf_vars[3, :], title="Output")
+pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
+pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
+pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
+pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
 plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
 savefig("mon_shock.png")

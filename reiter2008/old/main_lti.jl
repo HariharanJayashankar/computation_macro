@@ -5,7 +5,7 @@ using lti
 include("menucost_funcs.jl")
 
 # read jacobians
-read_jacob = true
+read_jacob = false
 
 params = @with_kw (
     β = 0.97^(1/12),
@@ -19,7 +19,7 @@ params = @with_kw (
     iss = 1.0/β - 1.0,
     # otehr parameters (numeric mostly)
     m =  3, # tauchen grid distance
-    na = 50, #number of grids in shock
+    na = 10, #number of grids in shock
     np = 500, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
@@ -73,16 +73,16 @@ xss = [
     1e-9,
     1e-9
 ]
-# droptol!(xss, 1e-10)
 ηss = zeros(sizedist+2)
 ϵ_ss = zeros(2)
 
-Fout = residequations(xss, xss, ηss, ϵ_ss, p)
+Fout = residequations_lti(xss, xss, xss, ϵ_ss, p)
 if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
+    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(t, xss, xss, ϵ_ss, p), xss)
+    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, t,  xss, ϵ_ss, p), xss)
+    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss, t, ϵ_ss, p), xss)
+    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations_lti(xss, xss, xss, t, p), ϵ_ss)
+    # H1, H2, H3, H4 = linearized_coeffs(residequations_lti, xss, ϵ_ss, p)
     jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
 else
     println("Reading Jacobians...")
@@ -93,9 +93,13 @@ else
     H4 = collect(H4)
 end
 
-println("Running Gensys")
-G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H1, H2,zeros(size(xss,1)), H3, H4)
-
+# singuylar solvent trick
+μ=0.01
+M = I*μ
+H3hat = H3
+H2hat = H2 + 2.0*H3hat*M
+H1hat = H3*M^2 + H2*M + H1
+F0, Q, emessage = lti.solve_system(H1hat, H2hat, H3hat, H4)
 
 println("Making plots...")
 # ==  plot IRFS == #

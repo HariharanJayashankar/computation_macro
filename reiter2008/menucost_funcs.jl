@@ -147,31 +147,45 @@ end
 
 #==
 Backward induction of V - for when we know tomorrow's value function 
+infl = log(P_t/P_{t-1})
 ==#
-function  vBackwardFirm(agg, params, Z, v1; 
+function  vBackwardFirm(agg, params, Z, v1, infl, infl_f; 
                         stochdiscfactor = 1.0,
                         maxiter=10000, tol=1e-6, 
-                        printinterval=1000, printinfo=true)
+                        printinterval=1000, printinfo=true) 
 
 
     @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
     
 
     # preallocate profit matrix
-    profit_mat = zeros(params.np, params.na);
+    profit_mat = zeros(eltype(v1), params.np, params.na);
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
+            pval_adj = pval / exp(infl_f)
             aval = Z * params.agrid[aidx];
-            profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
+            profit_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
     end
 
     error = 10;
     iter = 0;
 
+    # interpolate v1
+    itp = interpolate(v1, (BSpline(Linear()), NoInterp()))
+    eitp = extrapolate(itp, Line())
+    v1interp = Interpolations.scale(eitp, pgrid, 1:na)
+    v1_infl = zeros(eltype(v1), np, na)
+    for pidx = 1:np
+        for aidx = 1:na
+            pval = pgrid[pidx]
+            pval_adj = pval / exp(infl_f)
+            v1_infl[pidx, aidx] = v1interp(pval_adj, aidx)
+        end
+    end
 
-    ev1 = v1 * aP';
+    ev1 = v1_infl * aP';
 
     # iterate over choices
     vnoadjust = profit_mat + β * stochdiscfactor * ev1
@@ -199,7 +213,7 @@ function Tfunc(omega0, polp, pollamb, params)
     aP = params.aP
 
     # update shock dist
-    omega1hat = zeros(params.np, params.na);
+    omega1hat = zeros(eltype(omega0), params.np, params.na);
     for pidx = 1:params.np
         for aidx = 1:params.na
 
@@ -210,7 +224,7 @@ function Tfunc(omega0, polp, pollamb, params)
     end
 
     # update policies
-    omega1 = zeros(params.np, params.na);
+    omega1 = zeros(eltype(omega0), params.np, params.na);
     for pidx = 1:params.np
         for aidx = 1:params.na
             
@@ -367,8 +381,8 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=100, deltaw=0.1,
         # get aggregate fixed cost payments
         # get labour demand
         # integrate
-        Ld = 0
-        F = 0
+        Ld = 0.0
+        F = 0.0
         for pidx = 1:p.np
             for aidx = 1:p.na
                 pval = p.pgrid[pidx]
@@ -448,68 +462,28 @@ function residequations(Xl, X,
     V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
 
     # need to rewrite this opening to accomodate vectors for V, polp, etc
-    wl, rl, Yl, Cl, Zl, Zmonl  = exp.(Xl[(2*sizedist+1):(end-1)])
-    w, r, Y, C, Z, Zmon  = exp.(X[(2*sizedist+1):(end-1)])
-    infl_l = Xl[end]
-    infl = X[end]
+    wl, rl, Yl, Cl, Zl  = exp.(Xl[(2*sizedist+1):(end-2)])
+    w, r, Y, C, Z = exp.(X[(2*sizedist+1):(end-2)])
+    Zmonl, infl_l = Xl[(end-1):end]
+    Zmon, infl = X[(end-1):end]
 
 
     # expectation errors
     ηv = reshape(η[1:sizedist], np, na)
-    η_stoch, η_ee = η[(1*sizedist + 1):end]
+    # η_omega = reshape(η[(sizedist + 1):(2*sizedist)], np, na)
+    # η_ee = η[end]
 
-    stochdiscfactor = Cl/C + η_stoch
+    stochdiscfactor = Cl/C 
 
     #==
     Compute Value functions given optimal adjusting price rule
     ==#
-    # Vout_int = cubic_spline_interpolation((pgrid_orig, agrid_orig), Vout)
-    # Vadj_l_check = zeros(p.np, p.na)
-    # flowprofit = zeros(p.na)
-    # for aidx=1:p.na
-    #     pval = polp_l_val[aidx];
-    #     aval = agrid_l[aidx];
-    #     flowprofit[aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(wl/exp(aval))) * Yl;
-    # end
-
     # calculate implied polp
     V_l_check, Vadj_l, Vnoadj_l, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
-        (Y=Yl, w=wl), p, Zl, V, stochdiscfactor = stochdiscfactor
+        (Y=Yl, w=wl), p, Zl, V, infl_l, infl, stochdiscfactor = stochdiscfactor
     )
     V_l_check += ηv
 
-
-    # store v adjust check
-    # Vadj_l_check = zeros(p.np, p.na)
-    # for pidx in 1:p.np
-    #     for aidx in 1:p.na
-    #         pval = polp_l_val[pidx]
-    #         # compute expectations
-    #         Ex = 0
-    #         for a1idx in 1:p.na
-    #             a1val = agrid[a1idx]
-    #             Ex += Vout_int(pval, a1val) * p.aP[aidx, a1idx]
-    #         end
-    #         Vadj_l_check[pidx, aidx] = flowprofit[aidx] + β*stochdiscfactor*Ex
-    #     end
-    # end
-
-    # store v noadjust check
-    # Vnadj_l_check = zeros(p.np, p.na)
-    # for pidx in 1:p.np
-    #     for aidx in 1:p.na
-    #         pval = p.pgrid[pidx]
-    #         aval = p.agrid[aidx]
-    #         val= (pval^(1-ϵ) - pval^(-ϵ)*(wl/exp(aval))) * Yl
-    #         # compute expectations
-    #         Ex = 0
-    #         for a1idx in 1:p.na
-    #             a1val = agrid[a1idx]
-    #             Ex += Vout_int(pval, a1val) * p.aP[aidx, a1idx]
-    #         end
-    #         Vnadj_l_check[pidx, aidx] = val + β*stochdiscfactor*Ex
-    #     end
-    # end
 
     pollamb = Vadj_l .> Vnoadj_l
 
@@ -520,7 +494,7 @@ function residequations(Xl, X,
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
-    Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
+    Yimplied = sum((p.pgrid  .^ (-p.ϵ))' * pdist)
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -539,11 +513,11 @@ function residequations(Xl, X,
 
     # monetary policy
     mon_pol_error = infl - log(Yl) + log(Y) - Zmon
-    Zmonerror = log(Zmon) - p.ρ_agg * log(Zmonl) - ϵ[2]
+    Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
     cerror = C - Yimplied - F
     w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/Cl) - (1+r)*p.β*1/(C) + η_ee
+    euler_error  = (1/Cl) - (1+r)*p.β*1/(exp(infl)*C)
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
 
 
@@ -560,8 +534,6 @@ function residequations(Xl, X,
                                         Zmonerror,
                                         zerror]
 
-    residvector = sparse(residvector)
-    droptol!(residvector, 1e-10)
      
     return residvector
     
@@ -624,13 +596,13 @@ function residequations_lti(Xl, X, Xf, ϵ, p)
     ==#
     # calculate implied polp
     V_check, Vadj, Vnoadj, polp_check, pollamb, _, _ = vBackwardFirm(
-        (Y=Y, w=w), p, Z, V_f, stochdiscfactor = stochdiscfactor
+        (Y=Y, w=w), p, Z, V_f, infl, infl_f, stochdiscfactor = stochdiscfactor
     )
 
     #==
     Compute Distribution checks
     ==#
-    omega1, omega1hat = Tfunc(omega, polp_check, pollamb, p)
+    omega1, omega1hat = Tfunc(omega_l, polp_check, pollamb, p)
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
@@ -662,7 +634,7 @@ function residequations_lti(Xl, X, Xf, ϵ, p)
 
     # == residual vector == #
     residvector = zero(X)
-    residvector[1:sizedist] = vec(omega1 - omegaf)
+    residvector[1:sizedist] = vec(omega1 - omega)
     residvector[(sizedist+1):(2*sizedist)] = vec(V_check - V)
 
 
@@ -677,18 +649,54 @@ function residequations_lti(Xl, X, Xf, ϵ, p)
     
 end
 
+# make wrapper functions of only each argument of resid to alloww forward diff
+# not get worried about types
+
 #==
 Linarizeed coefficients
 ==#
-function linearized_coeffs(equations, xss, shocks_sd, fargs)
+function linearized_coeffs(equations, xss, ϵ_ss, p)
 
-    shocks_sd = atleast_2d(shocks_sd)
-    shocks_ss = zero(shocks_sd)
+    # l for lag
+    function residequations_lti_l(Xl, xss, ϵ, p)
 
-    H1 = ForwardDiff.jacobian(t -> equations(t, xss,  shocks_ss, shocks_sd, fargs...), xss)
-    H2 = ForwardDiff.jacobian(t -> equations(xss, t,  shocks_ss, shocks_sd, fargs...), xss)
-    H3 = ForwardDiff.jacobian(t -> equations(xss, xss, t,  shocks_sd, fargs...), xss)
-    H4 = ForwardDiff.jacobian(t -> equations(xss, xss, xss, t,  fargs...), shocks_ss)
+        xss = convert.(eltype(Xl), xss)
+        ϵ = convert.(eltype(Xl), ϵ)
+        residout = equations(Xl, xss, xss, ϵ, p)
+
+    end
+
+    # c for current
+    function residequations_lti_c(X, xss, ϵ, p)
+
+        xss = convert.(eltype(X), xss)
+        ϵ = convert.(eltype(X), ϵ)
+        residout = equations(xss, X, xss, ϵ, p)
+
+    end
+
+    # f for future
+    function residequations_lti_f(Xf, xss, ϵ, p)
+
+        xss = convert.(eltype(Xf), xss)
+        ϵ = convert.(eltype(Xf), ϵ)
+        residout = equations(xss, xss, Xf, ϵ, p)
+
+    end
+
+    # eps for epsilon
+    function residequations_lti_eps(xss, ϵ, p)
+
+        xss = convert.(eltype(ϵ), xss)
+        residout = equations(xss, xss, xss, ϵ, p)
+
+    end
+
+
+    H1 = ForwardDiff.jacobian(t -> residequations_lti_l(t, xss, ϵ_ss, p), xss)
+    H2 = ForwardDiff.jacobian(t -> residequations_lti_c(t,  xss, ϵ_ss, p), xss)
+    H3 = ForwardDiff.jacobian(t -> residequations_lti_f(t, xss, ϵ_ss, p), xss)
+    H4 = ForwardDiff.jacobian(t -> residequations_lti_eps(xss, t, p), ϵ_ss)
 
     return H1, H2, H3, H4
 
