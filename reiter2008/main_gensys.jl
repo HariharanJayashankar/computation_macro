@@ -42,24 +42,9 @@ params = @with_kw (
 )
 p = params()
 
-vout, vadjust, vnoadjust, polpout, pollambdaout, iter, error = viterFirm((w=p.w_flex, Y=4), p)
-
-heatmap(vout)
-heatmap(polpout)
-heatmap(pollambdaout)
-
-omegahat, omega = genJointDist(polpout, pollambdaout, p)
-heatmap(omegahat)
-heatmap(omega)
-phatdist = sum(omegahat, dims=2)
-plot(p.pgrid, phatdist)
-pdist = sum(omega, dims=2)
-plot!(p.pgrid, pdist)
-
 # equilibrium
 w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
 Vout = max.(Vadjust, Vnoadjust)
-
 
 # testing reiter resid
 sizedist = p.na * p.np
@@ -124,7 +109,7 @@ pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
 pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
 pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
-plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
+plot(pw, pr, pY, pC, pZ, Zmon, pinfl, layout=(2,4))
 savefig("tfp_shock.png")
 
 # monetary policy SHOCK

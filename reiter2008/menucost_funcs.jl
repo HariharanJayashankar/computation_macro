@@ -159,13 +159,15 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     
 
     # preallocate profit matrix
+    profit_infl_mat = zeros(eltype(v1), params.np, params.na);
     profit_mat = zeros(eltype(v1), params.np, params.na);
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
             pval_adj = pval / exp(infl_f)
             aval = Z * params.agrid[aidx];
-            profit_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
+            profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
+            profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
     end
 
@@ -185,10 +187,11 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
         end
     end
 
-    ev1 = v1_infl * aP';
+    ev1_infl = v1_infl * aP';
+    ev1 = v1 * aP';
 
     # iterate over choices
-    vnoadjust = profit_mat + β * stochdiscfactor * ev1
+    vnoadjust = profit_infl_mat + β * stochdiscfactor * ev1_infl
     vadjust_val = profit_mat .- κ +  β * stochdiscfactor * ev1
     vadjustmax, pstar = findmax(vadjust_val, dims=1)
 
