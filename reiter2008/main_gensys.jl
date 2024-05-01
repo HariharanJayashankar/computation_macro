@@ -109,7 +109,7 @@ pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
 pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
 pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
-plot(pw, pr, pY, pC, pZ, Zmon, pinfl, layout=(2,4))
+plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
 savefig("tfp_shock.png")
 
 # monetary policy SHOCK
