@@ -18,6 +18,8 @@ params = @with_kw (
     σ = 0.15,
     κ = 0.02,
     iss = 1.0/β - 1.0,
+    ϕ_infl = 0.5, # talor rule infl
+    ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
     m =  3, # tauchen grid distance
     na = 10, #number of grids in shock

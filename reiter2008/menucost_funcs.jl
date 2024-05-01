@@ -515,7 +515,9 @@ function residequations(Xl, X,
     end
 
     # monetary policy
-    mon_pol_error = infl - log(Yl) + log(Y) - Zmon
+    # talor rule
+    r_val = max(p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-p.Yflex) + Zmon, -p.iss)
+    mon_pol_error = r_val - r
     Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
     cerror = C - Yimplied - F
