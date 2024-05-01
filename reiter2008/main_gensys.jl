@@ -93,7 +93,7 @@ irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
         # everything is deviations from ss 
-        irf[:, t] = impact *  ϵ_tfp_irf[:, 1]
+        irf[:, t] =  impact * ϵ_tfp_irf[:, 1]
     else
         irf[:, t] = G1 * irf[:, t-1]
     end
@@ -109,7 +109,7 @@ pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
 pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
 pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
-plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
+plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4), legend=false)
 savefig("tfp_shock.png")
 
 # monetary policy SHOCK
@@ -120,7 +120,7 @@ for t=1:Tirf
     if t == 1
         irf[:, t] = impact *  ϵ_mon_irf[:, 1]
     else
-        irf[:, t] = G1 * irf[:, t-1]
+        irf[:, t] = G1 * (irf[:, t-1])
     end
 end
 
@@ -134,5 +134,5 @@ pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
 pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
 pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
-plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4))
+plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4), legend=false)
 savefig("mon_shock.png")
