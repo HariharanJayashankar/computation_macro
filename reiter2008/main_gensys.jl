@@ -18,7 +18,7 @@ params = @with_kw (
     σ = 0.15,
     κ = 0.02,
     iss = 1.0/β - 1.0,
-    ϕ_infl = 0.5, # talor rule infl
+    ϕ_infl = 1.2, # talor rule infl
     ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
     m =  3, # tauchen grid distance
@@ -61,15 +61,15 @@ xss = [
     1e-9,
     1e-9
 ]
-ηss = zeros(1*sizedist)
+ηss = zeros(1*sizedist+1)
 ϵ_ss = zeros(2)
 
-Fout = residequations(xss, xss, ηss, ϵ_ss, p)
+Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
 if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p), ηss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p), ϵ_ss)
+    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p, Y), xss)
+    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p, Y), xss)
+    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p, Y), ηss)
+    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p, Y), ϵ_ss)
     jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
 else
     println("Reading Jacobians...")

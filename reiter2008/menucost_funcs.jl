@@ -164,7 +164,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
-            pval_adj = pval / exp(infl_f)
+            pval_adj = pval / exp(infl)
             aval = Z * params.agrid[aidx];
             profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
             profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
@@ -182,7 +182,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     for pidx = 1:np
         for aidx = 1:na
             pval = pgrid[pidx]
-            pval_adj = pval / exp(infl_f)
+            pval_adj = pval / exp(infl)
             v1_infl[pidx, aidx] = v1interp(pval_adj, aidx)
         end
     end
@@ -450,7 +450,7 @@ Last three are needed to solve todays value function
 ==#
 function residequations(Xl, X, 
                 η, ϵ, 
-                p)
+                p, yss)
     
     # default params
     @unpack np, na = p
@@ -469,14 +469,14 @@ function residequations(Xl, X,
     w, r, Y, C, Z = exp.(X[(2*sizedist+1):(end-2)])
     Zmonl, infl_l = Xl[(end-1):end]
     Zmon, infl = X[(end-1):end]
+    
 
 
     # expectation errors
     ηv = reshape(η[1:sizedist], np, na)
-    # η_omega = reshape(η[(sizedist + 1):(2*sizedist)], np, na)
     # η_ee = η[end]
 
-    stochdiscfactor = Cl/C 
+    stochdiscfactor = (Cl*infl)/C 
 
     #==
     Compute Value functions given optimal adjusting price rule
@@ -487,13 +487,10 @@ function residequations(Xl, X,
     )
     V_l_check += ηv
 
-
-    pollamb = Vadj_l .> Vnoadj_l
-
     #==
     Compute Distribution checks
     ==#
-    omega1, omega1hat = Tfunc(omega_l, polp_l_check, pollamb, p)
+    omega1, omega1hat = Tfunc(omega_l, polp_l_check, pollamb_l, p)
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
@@ -516,13 +513,13 @@ function residequations(Xl, X,
 
     # monetary policy
     # talor rule
-    r_val = max(p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-p.Yflex) + Zmon, -p.iss)
+    r_val = max(p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + Zmon, -p.iss) + p.iss
     mon_pol_error = r_val - r
     Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
     cerror = C - Yimplied - F
     w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/Cl) - (1+r)*p.β*1/(exp(infl)*C)
+    euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C)
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
 
 
