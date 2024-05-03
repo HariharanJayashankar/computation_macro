@@ -44,20 +44,24 @@ params = @with_kw (
 )
 p = params()
 
+
 # equilibrium
 w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
 Vout = max.(Vadjust, Vnoadjust)
 
+pdist = sum(omega, dims=2)
+plot(p.pgrid, pdist)
+
 # testing reiter resid
 sizedist = p.na * p.np
 xss = [
-    vec(omega)...,
-    vec(Vout)...,
-    log(w),
-    log(p.iss),
-    log(Y),
-    log(C),
-    1e-9,
+    omega...,
+    Vout...,
+    w,
+    p.iss,
+    Y,
+    C,
+    1.0,
     1e-9,
     1e-9
 ]
@@ -101,8 +105,7 @@ for t=1:Tirf
     end
 end
 
-irf_vars = exp.(irf[(2*sizedist+1):(end-2), :])
-irf_vars = vcat(irf_vars, irf[(end-1):end, :])
+irf_vars = irf[(2*sizedist+1):end, :]
 
 pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
 pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")

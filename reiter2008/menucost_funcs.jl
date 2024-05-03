@@ -258,7 +258,7 @@ function it returns the actual price value instead of the price index in the
 pricegrid
 - pollamb is {1,0} for whether a firm adjusts or not
 ==#
-function Tfunc_general(omega0, polp, pollamb, params, ngrid)
+function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl)
     
     aP = params.aP
 
@@ -278,7 +278,8 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid)
     for pidx = 1:ngrid
         for aidx = 1:params.na
             
-            pval = polp[aidx];
+            pval = params.pgrid[polp[pidx, aidx]];
+            pval = pval / exp(infl);
 
             # non adjusters
             omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
@@ -289,8 +290,9 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid)
                 pidx_hi = pidx_lo + 1
                 total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
 
-                wt_lo = (pval - params.pgrid[pidx_lo])/total_dist
-                wt_hi = (params.pgrid[pidx_hi] - pval)/total_dist
+                wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
+                wt_lo = min(1.0, max(0.0, wt_lo))
+                wt_hi = 1 - wt_lo
                 
                 # adjusters
                 omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
@@ -310,6 +312,10 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid)
         end
     end
 
+    omega1 = omega1 ./ sum(omega1)
+    omega1hat = omega1hat ./ sum(omega1hat)
+    return omega1, omega1hat
+
 end
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
@@ -326,7 +332,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     while (error > tol) && (iter < maxiter)
 
         omega0 = omega1
-        omega1, omega1hat = Tfunc(omega0, polp, pollamb, params)
+        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np, params.Π_star)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
         omega0hat = omega1hat;
@@ -348,7 +354,7 @@ end
 #==
 Find equilibiurm Y and w to clear steady state
 ==#
-function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=100, deltaw=0.1,
+function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.1,
                             Yinit=1, deltaY=0.1,
                             printinterval=10)
 
@@ -450,7 +456,7 @@ Last three are needed to solve todays value function
 ==#
 function residequations(Xl, X, 
                 η, ϵ, 
-                p, yss)
+                p, yss )
     
     # default params
     @unpack np, na = p
@@ -465,8 +471,8 @@ function residequations(Xl, X,
     V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
 
     # need to rewrite this opening to accomodate vectors for V, polp, etc
-    wl, rl, Yl, Cl, Zl  = exp.(Xl[(2*sizedist+1):(end-2)])
-    w, r, Y, C, Z = exp.(X[(2*sizedist+1):(end-2)])
+    wl, rl, Yl, Cl, Zl  = Xl[(2*sizedist+1):(end-2)]
+    w, r, Y, C, Z = X[(2*sizedist+1):(end-2)]
     Zmonl, infl_l = Xl[(end-1):end]
     Zmon, infl = X[(end-1):end]
     
@@ -476,7 +482,7 @@ function residequations(Xl, X,
     ηv = reshape(η[1:sizedist], np, na)
     # η_ee = η[end]
 
-    stochdiscfactor = (Cl*infl)/C 
+    stochdiscfactor = (Cl*exp(infl))/C 
 
     #==
     Compute Value functions given optimal adjusting price rule
@@ -490,7 +496,7 @@ function residequations(Xl, X,
     #==
     Compute Distribution checks
     ==#
-    omega1, omega1hat = Tfunc(omega_l, polp_l_check, pollamb_l, p)
+    omega1, omega1hat = Tfunc_general(omega_l, polp_l_check, pollamb_l, p, p.np, infl)
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
@@ -513,7 +519,7 @@ function residequations(Xl, X,
 
     # monetary policy
     # talor rule
-    r_val = max(p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + Zmon, -p.iss) + p.iss
+    r_val = p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + Zmon
     mon_pol_error = r_val - r
     Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
