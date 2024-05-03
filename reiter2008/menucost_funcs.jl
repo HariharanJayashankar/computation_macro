@@ -165,7 +165,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
         for aidx=1:na
             pval = params.pgrid[pidx];
             pval_adj = pval / exp(infl)
-            aval = Z * params.agrid[aidx];
+            aval = Z .+ params.agrid[aidx];
             profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
             profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
@@ -182,7 +182,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     for pidx = 1:np
         for aidx = 1:na
             pval = pgrid[pidx]
-            pval_adj = pval / exp(infl)
+            pval_adj = pval * exp(infl_f)
             v1_infl[pidx, aidx] = v1interp(pval_adj, aidx)
         end
     end
@@ -279,7 +279,7 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl)
         for aidx = 1:params.na
             
             pval = params.pgrid[polp[pidx, aidx]];
-            pval = pval / exp(infl);
+            pval = pval * exp(infl);
 
             # non adjusters
             omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
@@ -480,7 +480,7 @@ function residequations(Xl, X,
 
     # expectation errors
     ηv = reshape(η[1:sizedist], np, na)
-    # η_ee = η[end]
+    η_ee = η[end]
 
     stochdiscfactor = (Cl*exp(infl))/C 
 
@@ -500,7 +500,8 @@ function residequations(Xl, X,
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
-    Yimplied = sum((p.pgrid  .^ (-p.ϵ))' * pdist)
+    p_infl = p.pgrid .* exp(infl)
+    Yimplied = sum((p_infl  .^ (-p.ϵ))' * pdist)
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -511,6 +512,7 @@ function residequations(Xl, X,
     for pidx = 1:p.np
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
+            pval = pval * exp(infl)
             aval = Zl * p.agrid[aidx]
             F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
             Ld += pval^(-p.ϵ) * exp(-aval) * Yl * omega1[pidx,aidx]
@@ -519,13 +521,13 @@ function residequations(Xl, X,
 
     # monetary policy
     # talor rule
-    r_val = p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + Zmon
+    r_val = p.iss +  p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + Zmon
     mon_pol_error = r_val - r
     Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
     cerror = C - Yimplied - F
     w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C)
+    euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C) - η_ee
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
 
 

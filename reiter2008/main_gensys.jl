@@ -94,7 +94,7 @@ Tirf = 40
 
 # TFP SHOCK
 ϵ_tfp_irf = zeros(2, Tirf)
-ϵ_tfp_irf[1, 1] = 0.1 # shock value for tfp
+ϵ_tfp_irf[1, 1] = 2.0 # shock value for tfp
 irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
@@ -119,7 +119,7 @@ savefig("tfp_shock.png")
 
 # monetary policy SHOCK
 ϵ_mon_irf = zeros(2, Tirf)
-ϵ_mon_irf[2, 1] = 0.01 # shock value
+ϵ_mon_irf[2, 1] = 0.25 # shock value
 irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
@@ -129,15 +129,13 @@ for t=1:Tirf
     end
 end
 
-irf_vars = exp.(irf[(2*sizedist+1):(end-2), :])
-irf_vars = vcat(irf_vars, irf[(end-1):end, :])
-
+irf_vars = irf[(2*sizedist+1):end, :]
 pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
 pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
 pY = plot(1:Tirf, irf_vars[3, :], title="Output")
 pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
-pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
-pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
+pZmon = plot(1:Tirf, irf_vars[6, :], title="TR Shock")
+pinfl = plot(1:Tirf, 100.0 * (exp.(irf_vars[7, :]) .- 1.0), title="Inflation (%)")
 plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4), legend=false)
 savefig("mon_shock.png")
