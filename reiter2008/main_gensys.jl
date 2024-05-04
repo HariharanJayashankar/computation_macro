@@ -1,4 +1,5 @@
-using  Plots
+using MKL
+using Plots
 using JLD2
 using lti
 
@@ -62,10 +63,9 @@ xss = [
     Y,
     C,
     1.0,
-    1e-9,
     1e-9
 ]
-ηss = zeros(1*sizedist+1)
+ηss = zeros(1*sizedist)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
@@ -112,9 +112,9 @@ pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
 pY = plot(1:Tirf, irf_vars[3, :], title="Output")
 pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
-pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
-pinfl = plot(1:Tirf, irf_vars[7, :], title="Inflation")
-plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4), legend=false)
+# pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
+pinfl = plot(1:Tirf, irf_vars[6, :], title="Inflation")
+plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
 savefig("tfp_shock.png")
 
 # monetary policy SHOCK
@@ -135,7 +135,7 @@ pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
 pY = plot(1:Tirf, irf_vars[3, :], title="Output")
 pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
 pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
-pZmon = plot(1:Tirf, irf_vars[6, :], title="TR Shock")
-pinfl = plot(1:Tirf, 100.0 * (exp.(irf_vars[7, :]) .- 1.0), title="Inflation (%)")
-plot(pw, pr, pY, pC, pZ, pZmon, pinfl, layout=(2,4), legend=false)
+# pZmon = plot(1:Tirf, irf_vars[6, :], title="TR Shock")
+pinfl = plot(1:Tirf, 100.0 * (exp.(irf_vars[6, :]) .- 1.0), title="Inflation (%)")
+plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
 savefig("mon_shock.png")
