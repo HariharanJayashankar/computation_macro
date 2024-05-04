@@ -261,17 +261,47 @@ function it returns the actual price value instead of the price index in the
 pricegrid
 - pollamb is {1,0} for whether a firm adjusts or not
 ==#
-function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl)
+function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
     
     aP = params.aP
 
     # update shock dist
     omega1hat = zeros(params.np, params.na);
+    agrid = log(Z) .+ params.agrid
     for pidx = 1:ngrid
         for aidx = 1:params.na
 
-            for a0idx = 1:params.na
-                omega1hat[pidx, aidx] = omega1hat[pidx, aidx] + omega0[pidx, a0idx] * aP[a0idx, aidx];
+            aval = agrid[aidx]
+
+            if aval > params.agrid[1] && aval < params.agrid[end]
+                aidx_vals = searchsorted(params.agrid, aval)
+                aidx_lo = last(aidx_vals)
+                aidx_hi = aidx_lo + 1
+                total_dist = params.agrid[aidx_hi] - params.agrid[aidx_lo]
+
+                wt_lo = 1.0 - (aval - params.agrid[aidx_lo])/total_dist
+                wt_lo = min(1.0, max(0.0, wt_lo))
+                wt_hi = 1 - wt_lo
+
+                for a0idx = 1:params.na
+                    omega1hat[pidx, aidx_hi] = omega1hat[pidx, aidx_hi] + wt_hi * omega0[pidx, a0idx] * aP[a0idx, aidx_hi]
+                    omega1hat[pidx, aidx_lo] = omega1hat[pidx, aidx_lo] + wt_lo * omega0[pidx, a0idx] * aP[a0idx, aidx_lo]
+                end
+
+                
+
+            elseif aval <= params.agrid[1]
+
+                for a0idx = 1:params.na
+                    omega1hat[pidx, 1] = omega1hat[pidx, 1] +  omega0[pidx, a0idx] * aP[a0idx, 1]
+                end
+
+            elseif aval >= params.agrid[end]
+
+                for a0idx = 1:params.na
+                    omega1hat[pidx, end] = omega1hat[pidx, end] +  omega0[pidx, a0idx] * aP[a0idx, end]
+                end
+
             end
         end
     end
@@ -294,8 +324,8 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl)
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1 - wt_lo
 
-                omega1[pidx_hi, aidx] = omega1[pidx, aidx] + wt_hi * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-                omega1[pidx_lo, aidx] = omega1[pidx, aidx] + wt_lo * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
                 
 
             elseif pval0 <= params.pgrid[1]
@@ -517,7 +547,7 @@ function residequations(Xl, X,
     #==
     Compute Distribution checks
     ==#
-    omega1, omega1hat = Tfunc_general(omega_l, polp_l_check, pollamb_l, p, p.np, infl)
+    omega1, omega1hat = Tfunc_general(omega_l, polp_l_check, pollamb_l, p, p.np, infl, Zl)
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
