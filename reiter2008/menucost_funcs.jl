@@ -256,6 +256,8 @@ end
 Tfunc general is meant to be a typical Young 2010 non stochastic simulation
 function.
 - omega0 is a 2d matrix of distribvution over (p,a) in the previous period
+- omega0hat is 2d matrix of distribution over (p,a) at beginin of period
+after shocks have been realized but before pricing decisions have been made
 - polp is the policy function conditional oin adjustment - crucially in this
 function it returns the actual price value instead of the price index in the
 pricegrid
@@ -560,14 +562,13 @@ function residequations(Xl, X,
     # get aggregate fixed cost payments
     # get labour demand
     # integrate
-    Ld = 0
-    F = 0
+    Ld = 0.0
+    F = 0.0
     for pidx = 1:p.np
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
-            # pval = pval * exp(infl)
-            aval = log(Z) .+ p.agrid[aidx]
-            F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
+            aval = p.agrid[aidx]
+            F += p.κ * pollamb_l[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
             Ld += pval^(-p.ϵ) * exp(-aval) * Yimplied * omega1[pidx,aidx]
         end
     end
