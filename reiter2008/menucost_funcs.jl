@@ -165,7 +165,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
         for aidx=1:na
             pval = params.pgrid[pidx];
             pval_adj = pval / exp(infl)
-            aval =  Z .* params.agrid[aidx];
+            aval =  log(Z) .+ params.agrid[aidx];
             profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
             profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
@@ -175,7 +175,7 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     iter = 0;
 
     # interpolate v1
-    itp = interpolate(v1, (BSpline(Cubic()), NoInterp()))
+    itp = interpolate(v1, (BSpline(Linear()), NoInterp()))
     eitp = extrapolate(itp, Line())
     v1interp = Interpolations.scale(eitp, pgrid, 1:na)
     v1_infl = zeros(eltype(v1), np, na)
@@ -386,7 +386,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     while (error > tol) && (iter < maxiter)
 
         omega0 = omega1
-        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np, params.Π_star)
+        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np, params.Π_star, 1.0)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
         omega0hat = omega1hat;
@@ -547,6 +547,8 @@ function residequations(Xl, X,
     #==
     Compute Distribution checks
     ==#
+    # this gives distribution at the start for period t before period t shocks
+    # have been realized
     omega1, omega1hat = Tfunc_general(omega_l, polp_l_check, pollamb_l, p, p.np, infl, Zl)
     pdist = sum(omega1, dims=2)
 
@@ -564,7 +566,7 @@ function residequations(Xl, X,
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
             # pval = pval * exp(infl)
-            aval = Z * p.agrid[aidx]
+            aval = log(Z) .+ p.agrid[aidx]
             F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
             Ld += pval^(-p.ϵ) * exp(-aval) * Yimplied * omega1[pidx,aidx]
         end

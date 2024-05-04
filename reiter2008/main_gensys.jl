@@ -94,7 +94,7 @@ Tirf = 40
 
 # TFP SHOCK
 ϵ_tfp_irf = zeros(2, Tirf)
-ϵ_tfp_irf[1, 1] = 2.0 # shock value for tfp
+ϵ_tfp_irf[1, 1] = p.σ # shock value for tfp
 irf = zeros(size(xss, 1), Tirf)
 for t=1:Tirf
     if t == 1
