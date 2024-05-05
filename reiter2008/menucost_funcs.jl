@@ -149,7 +149,7 @@ end
 Backward induction of V - for when we know tomorrow's value function 
 infl = log(P_t/P_{t-1})
 ==#
-function  vBackwardFirm(agg, params, Z, v1, infl, infl_f; 
+function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f; 
                         stochdiscfactor = 1.0,
                         maxiter=10000, tol=1e-6, 
                         printinterval=1000, printinfo=true) 
@@ -164,10 +164,8 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
-            pval_adj = pval / exp(infl)
-            aval =  log(Z) .+ params.agrid[aidx];
+            aval =  log(Z) + params.agrid[aidx];
             profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
-            profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
     end
 
@@ -175,23 +173,22 @@ function  vBackwardFirm(agg, params, Z, v1, infl, infl_f;
     iter = 0;
 
     # interpolate v1
-    itp = interpolate(v1, (BSpline(Linear()), NoInterp()))
+    itp = interpolate(v1, (BSpline(Linear()), BSpline(Linear())))
     eitp = extrapolate(itp, Line())
-    v1interp = Interpolations.scale(eitp, pgrid, 1:na)
+    v1interp = Interpolations.scale(eitp, pgrid, agrid)
     v1_infl = zeros(eltype(v1), np, na)
     v1_noadj = zeros(eltype(v1), np, na)
     for pidx = 1:np
         for aidx = 1:na
             pval = pgrid[pidx]
             pval_adj = pval / exp(infl_f)
-            pval_noadj = pval_adj / exp(infl)
-            v1_infl[pidx, aidx] = v1interp(pval_adj, aidx)
-            v1_noadj[pidx, aidx] = v1interp(pval_noadj, aidx)
+
+            aval = log(Z_f) + agrid[aidx]
+            v1_infl[pidx, aidx] = v1interp(pval_adj, aval)
         end
     end
 
     ev1_infl = v1_infl * aP';
-    ev1_noadj_infl = v1_noadj * aP';
 
     # iterate over choices
     vnoadjust = profit_mat + β * stochdiscfactor * ev1_infl
@@ -542,7 +539,7 @@ function residequations(Xl, X,
     ==#
     # calculate implied polp
     V_l_check, Vadj_l, Vnoadj_l, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
-        (Y=Yl, w=wl), p, Zl, V, infl_l, infl, stochdiscfactor = stochdiscfactor
+        (Y=Yl, w=wl), p, Zl, Z, V, infl_l, infl, stochdiscfactor = stochdiscfactor
     )
     V_l_check += ηv
 
@@ -555,8 +552,7 @@ function residequations(Xl, X,
     pdist = sum(omega1, dims=2)
 
     # get implied aggregate Y
-    # p_infl = p.pgrid .* exp(infl)
-    Yimplied = sum((p.pgrid  .^ (-p.ϵ))' * pdist)
+    Yimplied = (p.pgrid  .^ (-p.ϵ)) ⋅ pdist
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -577,11 +573,10 @@ function residequations(Xl, X,
     # talor rule
     r_val = rl +  p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + ϵ[2]
     mon_pol_error = r_val - r
-    # Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
 
     cerror = C - Yimplied + F
     w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/Cl) - (1+r)*p.β*1/(exp(infl)*C) - η_ee
+    euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C) - η_ee
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
 
 

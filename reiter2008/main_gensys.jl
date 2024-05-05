@@ -65,7 +65,7 @@ xss = [
     1.0,
     1e-9
 ]
-ηss = zeros(1*sizedist)
+ηss = zeros(1*sizedist+1)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
@@ -90,7 +90,7 @@ G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(
 
 println("Making plots...")
 # ==  plot IRFS == #
-Tirf = 40
+Tirf = 20
 
 # TFP SHOCK
 ϵ_tfp_irf = zeros(2, Tirf)
@@ -107,13 +107,13 @@ end
 
 irf_vars = irf[(2*sizedist+1):end, :]
 
-pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
-pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
-pY = plot(1:Tirf, irf_vars[3, :], title="Output")
-pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
-pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
+pw = plot(1:(Tirf), irf_vars[1, :], title="Wage")
+pr = plot(1:(Tirf), irf_vars[2, :], title="Interest Rate")
+pY = plot(1:(Tirf), irf_vars[3, :], title="Output")
+pC = plot(1:(Tirf), irf_vars[4, :], title="Consumption")
+pZ = plot(1:(Tirf), irf_vars[5, :], title="TFP")
 # pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
-pinfl = plot(1:Tirf, irf_vars[6, :], title="Inflation")
+pinfl = plot(1:(Tirf), irf_vars[6, :], title="Inflation")
 plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
 savefig("tfp_shock.png")
 
