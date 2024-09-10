@@ -50,17 +50,72 @@ function scaleDown(x,xmin,xmax)
 end
 
 #==
-change of vars accroding to gauss legendre
+Simpsons integration rule operator
+Given a function f, and end points a and b
+This computes
+int_a^b
+Taken from https://discourse.julialang.org/t/simpsons-rule/84114/2
+First function takes a vector 
+Second takes a fcuntion and creates the vector and passes
+it to the first function.
 
-if we want to calcuulate int_xlo^xhi x dx
-
-We can do the transformation
-x = ((xhi - xlo)*t + xhi + xlo)/2
-=> t = (2x - xhi - xlo)/(xhi - xlo)
+Q: what does @views do here?
 ==#
-function changeofvars(x, xlo, xhi)
-    t = (2*x - xhi - xlo)/(xhi - xlo)
-    return t
+@views function simps(f::Function, x::AbstractVector)
+    n = length(x) - 1
+    h = (x[end]-x[begin])/n
+    I= h/3*(f(x[1])+2*sum(f,x[3:2:end-2])+4*sum(f,x[2:2:end])+f(x[end]))
+    return I
+end
+simps(f::Function, a::Real, b::Real, n::Integer) = simps(f, a:((b-a)/n):b)
+simps(x::AbstractVector) = simps(identity, x)
+
+function simps2d(func::Function, a::Real, b::Real, c::Real, d::Real, NX::Integer, NY::Integer)
+    
+    # Ensure the number of intervals is even!
+    NX = Int(2*ceil(NX/2));
+    NY = Int(2*ceil(NY/2));
+    # Set up the integration step sizes in the x and y directions
+    hx = (b - a)/NX;
+    hy = (d - c)/NY;
+    # define grid vectors
+    xg = a:hx:b;
+    yg = c:hy:d;
+    # xxg, yyg = meshgrid(xg,yg);
+    # Now set up a matrix U that contains the values of the function evaluated at all
+    # points on the 2D grid setup by xg and yg.
+    U = func.(xg', yg);
+    # Evaluate the contribution from the corner points first.
+    # These all have weight 1. NB U(1,1) corresponds to func(a,b) etc.
+    s1 = ( U[1,1] + U[1,NY+1] + U[NX+1,1] + U[NX+1,NY+1] );
+    # Now sum the contributions from the terms along each edge not including
+    # corners. There are 4 edges in the 2D case that contribute to the sum
+    # and we have points with weight 4 and points with weight 2. Points
+    # with weight 4 are acessed by indices 2:2:N (N=NX,NY,NZ), while points with
+    # weight 2 are accessed by indices 3:2:N-1.
+    # Define vectors of odd and even indices for each direction:
+    ixo = 2:2:NX;
+    ixe = 3:2:NX-1;
+    iyo = 2:2:NY;
+    iye = 3:2:NY-1;
+    s2 = 2*( sum(U[1,iye]) + sum(U[NX+1,iye]) + sum(U[ixe,1]) + sum(U[ixe,NY+1]) );
+    s3 = 4*( sum(U[1,iyo]) + sum(U[NX+1,iyo]) + sum(U[ixo,1]) + sum(U[ixo,NY+1]) );
+    # Now we look at the remaining contributions on the interior grid points. 
+    # Looking at our array example above we see that there
+    # are only 3 different weights viz. 16, 8 and 4. Some thought will show that
+    # using our definitions above for odd and even gridpoints, that weight 16 is
+    # only found at points (xodd, yodd), weight 4 is found at points (xeven,yeven)
+    # while weight 8 is found at both (xodd,yeven) or (xeven,yodd).
+    # Our contribution from interior points is then
+    s4 = 16*sum( sum( U[ixo,iyo] ) ) + 4*sum( sum( U[ixe,iye] ) );
+    s5 =  8*sum( sum( U[ixe,iyo] ) ) + 8*sum( sum( U[ixo,iye] ) );
+    # Finally add all the contributions and multiply by the step sizes hx, hy and 
+    # a factor 1/9 (1/3 in each direction).
+    out = s1 + s2 + s3 + s4 + s5;
+    out = out*hx*hy/9.0
+
+    return out
+
 end
 
 # find stationary distribution
@@ -477,21 +532,10 @@ function objectiveDensity(g, m, params)
 
     alo = minimum(agrid)
     ahi = maximum(agrid)
-    pgrid_quad = scaleUp(xquad, plo, phi)
-    pscale = (phi - plo)/2.0
-    agrid_quad = scaleUp(xquad, alo, ahi)
-    ascale = (ahi - alo)/2.0
+    pgrid_simp = range(plo, phi, 5)
 
-    integral = 0.0
-    for pidx = 1:nquad
-        for aidx = 1:nquad
-            pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
-            integral += getDensity(pval, aval, m, g, 1.0, params) * wquad[pidx] * wquad[aidx]
-        end
-    end
-
-    integral *= pscale * ascale
+    # simpsons quadrature
+    integral = simps2d((p,a) -> getDensity(p, a, m, g, 1.0, params), plo, phi, alo, ahi, 5, 5)
 
     return integral
 
@@ -517,24 +561,10 @@ function getDensityG!(G, x, m, params)
 
     # first two moments
     # need to integrate
-    for pidx = 1:nquad
-        for aidx = 1:nquad
-            pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
+    # simpsons quadrature
 
-            moment = pval - m[1]
-            G[1] += moment * getDensity(pval, aval, m, x, 1.0, params) * wquad[pidx] * wquad[aidx]
-        end
-    end
-    for pidx = 1:nquad
-        for aidx = 1:nquad
-            pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
-
-            moment = aval - m[2]
-            G[2] += moment * getDensity(pval, aval, m, x, 1.0, params) * wquad[pidx] * wquad[aidx]
-        end
-    end
+    G[1] = simps2d((p,a) -> (p - m[1]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
+    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
 
     # rest of the moments
     idx=2
@@ -542,21 +572,10 @@ function getDensityG!(G, x, m, params)
         for j=0:i
             # need to integrate
             idx += 1
-            for pidx = 1:nquad
-                for aidx = 1:nquad
-
-                    pval = pgrid_quad[pidx]
-                    aval = agrid_quad[aidx]
-
-                    moment = (pval - m[1])^(i-j) * (aval - m[2])^j - m[idx]
-                    # need to offset G by 2 more since we dont divide into G_Base and G_rest
-                    G[idx] += moment * getDensity(pval, aval, m, x, 1.0, params) * wquad[pidx] * wquad[aidx]
-                end
-            end
+            G[idx] = simps2d((p,a) -> ((p - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
         end
     end
 
-    G[:] *= pscale * ascale
 
 end
 

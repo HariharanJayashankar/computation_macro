@@ -56,6 +56,12 @@ params = @with_kw (
 )
 p = params()
 
+# does simpson2d work well
+# https://d-arora.github.io/Doing-Physics-With-Matlab/mpDocs/math_integration_2D.pdf
+# should be 416
+f(x,y) = x^2 * y^3
+simps2d(f, 0.0, 2.0, 1.0, 5.0, 5, 5)
+
 
 # manually testing winbrry
 # m0 = ones(p.nparams)
@@ -73,18 +79,6 @@ getDensityG!(G, gprev, m0, p)
 
 maximum(abs.(G - fwd))
 # seems right
-
-# does my integration look righT?
-#test for int_-2^2 x^2 dx = 16/3
-xlo = -2.0
-xhi = 2.0
-xgrid_scaled = scaleUp(p.xquad, xlo, xhi)
-scaling_factor = (xhi - xlo)/2.0
-f(x) = x.^2
-(p.wquad ⋅ f.(xgrid_scaled)) * scaling_factor
-16/3
-# my understandding seems right!
-
 
 
 result = optimize(
@@ -109,8 +103,7 @@ result = optimize(
 @show Optim.converged(result)
 gest = Optim.minimizer(result)
 densityOut = Optim.minimum(result)
-# g0 = 1.0 / densityOut
-g0 = 1.0
+g0 = 1.0 / densityOut
 
 # see if this density gives back similar moments
 alo = minimum(p.agrid)
