@@ -1,6 +1,7 @@
 using MKL
 using Plots
 using JLD2
+using LinearAlgebra
 
 include("menucost_funcs.jl")
 include("gensysdt.jl")
@@ -37,11 +38,11 @@ params = @with_kw (
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
     pss = log.(pflex),
-    plo = 0.5*pflex,
+    plo = 0.1*pflex,
     phi = 2.0*pflex,
     pgrid = range(plo, phi, length=np),
     ρ_agg = 0.9,
-    ng = 2,
+    ng = 5,
     nparams = 2 + sum([(i+1 for i=2:ng)...]),
     nquad = 10,
     ngh=3,
@@ -52,7 +53,9 @@ params = @with_kw (
     # for shocks
     gh_quad_out = gausshermite(ngh; normalize=true),
     xgh = gh_quad_out[1],
-    wgh = gh_quad_out[2]
+    wgh = gh_quad_out[2],
+    nsimp=20, # number of points for simpson quadrature
+    dampening=0.1 # learning rate
 )
 p = params()
 
@@ -60,16 +63,17 @@ p = params()
 # https://d-arora.github.io/Doing-Physics-With-Matlab/mpDocs/math_integration_2D.pdf
 # should be 416
 f(x,y) = x^2 * y^3
-simps2d(f, 0.0, 2.0, 1.0, 5.0, 5, 5)
+simps2d(f, 0.0, 2.0, 1.0, 5.0, 6, 6)
 
 
 # manually testing winbrry
-# m0 = ones(p.nparams)
-# gprev = -0.02 * ones(p.nparams)
-# gprev = zeros(2 + (p.ng-1)*(p.ng + 1))
-m0 = rand(p.nparams)
-gprev = -1e-2 * ones(p.nparams)
+# m0 = rand(p.nparams)
+# taken from equilibrium with histogram
+m0 = [0.9060857580754306, -9.540979117872439e-17, 0.058261844178690333, -0.06243177533634714, 0.06911418673639061, 0.009348699626453561, -0.006537415278756326, 0.0035201241401555147, 4.515394998958746e-17, 0.011542038186751393, -0.011316905912208635, 0.011587607563491472, -0.01238504694776647, 0.013798719971406092, 0.00500138025710313, -0.004023892704450641, 0.003127755735850773, -0.0022234913216252665, 0.001217471208940386, 1.563162908210859e-17]
+gprev = rand(p.nparams)
+gprev = zeros(p.nparams)
 objectiveDensity(gprev, m0, p)
+getDensity(1.0, 1.0, m0, gprev, 1.0, p)
 
 # is my gradient correct?
 using ForwardDiff
@@ -81,47 +85,47 @@ maximum(abs.(G - fwd))
 # seems right
 
 
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    Optim.Options(x_tol=1e-8, f_tol=1e-8, g_tol=1e-8, iterations=100_000)
- )
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    LBFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
-)
-Optim.minimizer(result)
+gprev =  ones(p.nparams)
+gprev = zeros(p.nparams)
+# result = optimize(
+#     x -> objectiveDensity(x, m0, p),
+#     gprev,
+#     Optim.Options(1e-3, g_tol=1e-3, iterations=100_000)
+#  )
+# result = optimize(
+#     x -> objectiveDensity(x, m0, p),
+#     gprev,
+#     LBFGS(),
+#     Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
+# )
+# # Optim.minimizer(result)
 result = optimize(
     x -> objectiveDensity(x, m0, p),
     (G,x) -> getDensityG!(G, x, m0, p),
     gprev,
-    BFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
+    LBFGS(),
+    Optim.Options(x_tol = 1e-3, f_tol = 1e-3, g_tol = 1e-3, iterations=100_000, show_trace=true)
 )
 @show Optim.converged(result)
 gest = Optim.minimizer(result)
+# objectiveDensity(gest, m0, p)
+
+
+# identifiability
+# condition number (absolutely) should'nt be bigger than 1
+H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
+evals = eigvals(H)
+conditionnumber = maximum(evals) / minimum(evals)
+# problem seems very badly defined!
+
 densityOut = Optim.minimum(result)
 g0 = 1.0 / densityOut
 
 # see if this density gives back similar moments
 alo = minimum(p.agrid)
 ahi = maximum(p.agrid)
-pgrid_quad = scaleUp(p.xquad, p.plo, p.phi)
-agrid_quad = scaleUp(p.xquad, alo, ahi)
-meanp = 0.0
-meana = 0.0
-for pidx = 1:p.nquad
-    for aidx = 1:p.nquad
-        pval = pgrid_quad[pidx]
-        aval = agrid_quad[aidx]
-
-        density = getDensity(pval, aval, m0, gest, g0, p) * p.wquad[pidx] * p.wquad[aidx]
-        meanp += density * pval
-        meana += density * aval
-    end
-end
+meanp = simps2d((price,a) -> price * getDensity(price, a, m0, gest, g0, p), p.plo, p.phi, alo, ahi, p.nsimp, p.nsimp)
+meana = simps2d((price,a) -> a * getDensity(price, a, m0, gest, g0, p), p.plo, p.phi, alo, ahi, p.nsimp, p.nsimp)
 @show abs(meanp - m0[1])
 @show abs(meana - m0[2])
 

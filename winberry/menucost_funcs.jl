@@ -528,14 +528,13 @@ The amtrix will be
 ==#
 function objectiveDensity(g, m, params)
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad = params
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad, nsimp = params
 
     alo = minimum(agrid)
     ahi = maximum(agrid)
-    pgrid_simp = range(plo, phi, 5)
 
     # simpsons quadrature
-    integral = simps2d((p,a) -> getDensity(p, a, m, g, 1.0, params), plo, phi, alo, ahi, 5, 5)
+    integral = simps2d((p,a) -> getDensity(p, a, m, g, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
 
     return integral
 
@@ -547,7 +546,7 @@ Get density gradient to help with optimizer
 function getDensityG!(G, x, m, params)
 
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad = params
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad, nsimp = params
 
     alo = minimum(agrid)
     ahi = maximum(agrid)
@@ -556,15 +555,12 @@ function getDensityG!(G, x, m, params)
     pscale = (phi - plo)/2.0
     ascale = (ahi - alo)/2.0
 
-    # set to 0 initially
-    G[:] .= 0.0
-
     # first two moments
     # need to integrate
     # simpsons quadrature
 
-    G[1] = simps2d((p,a) -> (p - m[1]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
-    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
+    G[1] = simps2d((p,a) -> (p - m[1]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
 
     # rest of the moments
     idx=2
@@ -572,7 +568,7 @@ function getDensityG!(G, x, m, params)
         for j=0:i
             # need to integrate
             idx += 1
-            G[idx] = simps2d((p,a) -> ((p - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, 5, 5)
+            G[idx] = simps2d((p,a) -> ((p - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
         end
     end
 
@@ -611,12 +607,12 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Z)
 
             pval = pgrid_quad[pidx]
             aval = agrid_quad[aidx]
-            aval = log(Z) + aval
 
             # iterate over next a
             for epsidx = 1:ngh
                 epsval = xgh[epsidx]
                 a1val = ρ*aval + σ*epsval
+                a1val = log(Z) + a1val
 
                 # remember a1s realize before next periods p
                 p1val = polp_interp(pval, a1val)
@@ -652,7 +648,7 @@ end
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
-    @unpack ng, pgrid, agrid = params
+    @unpack ng, pgrid, agrid, nparams, dampening = params
 
     tol_hist = tol * 1e3
     # == initial histogram approach to get decent starting moments == #
@@ -682,7 +678,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
 
     # == Winberry == #
     # calculate moments from histogram
-    m0 = zeros(2 + (ng-1)*(ng + 1))
+    m0 = zeros(nparams)
     pdist = sum(omega1, dims=2)
     adist = sum(omega1, dims=1)
     m0[1] = sum(pdist .* pgrid)
@@ -708,20 +704,23 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         end
     end
 
+
     # == iterate to steady state == #
     error = 10;
     iter = 0;
 
     # some initial guesses for g
-    gprev = 0.2 * ones(p.ng*(p.ng+1) - 1)
+    gprev = 0.2 * ones(nparams)
 
     while (error > tol) && (iter < maxiter)
 
         # find parameters
         result = optimize(
             x -> objectiveDensity(x, m0, p),
+            (G,x) -> getDensityG!(G, x, m0, p),
             gprev,
-            Optim.Options(x_tol=1e-8, f_tol=1e-8, g_tol=1e-8, iterations=100_000)
+            LBFGS(),
+            Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=100_000)
         )
         gest = Optim.minimizer(result)
         densityOut = Optim.minimum(result)
@@ -734,7 +733,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         # iterate LOM
         m1 = iterateDist(g0, gest, m0, polp, pollamb, params, 0.0, 1.0)
         error = maximum(abs.(m1 - m0))
-        m0 = m1
+        m0 = dampening * m1 + (1.0 - dampening) * m0
         iter += 1
         gprev = gest
 
@@ -752,10 +751,18 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     # get the parameters for final output
     result = optimize(
         x -> objectiveDensity(x, m0, p),
+        (G,x) -> getDensityG!(G, x, m0, p),
         gprev,
-        Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000)
+        LBFGS(),
+        Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
     )
     gest = Optim.minimizer(result)
+    H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
+    evals = eigvals(H)
+    conditionnumber = maximum(evals) / minimum(evals)
+    if abs(conditionnumber) > 1.0
+        @warn "Condition number is large, parametric distribuiton estimates is probably not well defined"
+    end
     densityOut = Optim.minimum(result)
     g0 = 1.0 / densityOut
 
