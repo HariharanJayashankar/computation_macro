@@ -52,7 +52,8 @@ params = @with_kw (
     # for shocks
     gh_quad_out = gausshermite(ngh; normalize=true),
     xgh = gh_quad_out[1],
-    wgh = gh_quad_out[2]
+    wgh = gh_quad_out[2],
+    dampening = 0.01
 )
 p = params()
 
@@ -134,7 +135,7 @@ end
 
 
 # equilibrium
-w0, Y0, Vadjust, Vnoadjust, polp, pollamb,  moments, gmat, g0, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
+w0, Y0, Vadjust, Vnoadjust, polp, pollamb,  moments, g, g0, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
 Vout = max.(Vadjust, Vnoadjust)
 
 # plotting joint dist with fine grids
@@ -147,7 +148,7 @@ for i=1:1000
     for j=1:1000
         pval = pgrid_fine[i]
         aval = agrid_fine[j]
-        dist[i,j] = getDensity(pval, aval, moments, gmat, g0, params)
+        dist[i,j] = getDensity(pval, aval, moments, g, g0, params)
     end
 end
 

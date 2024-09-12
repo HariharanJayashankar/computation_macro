@@ -592,12 +592,12 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Z)
 
             pval = pgrid_quad[pidx]
             aval = agrid_quad[aidx]
-            aval = log(Z) + aval
 
             # iterate over next a
             for epsidx = 1:ngh
                 epsval = xgh[epsidx]
                 a1val = ρ*aval + σ*epsval
+                a1val = log(Z) + a1val
 
                 # remember a1s realize before next periods p
                 p1val = polp_interp(pval, a1val)
@@ -633,7 +633,7 @@ end
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
-    @unpack ng, pgrid, agrid = params
+    @unpack ng, pgrid, agrid, dampening = params
 
     tol_hist = tol * 1e3
     # == initial histogram approach to get decent starting moments == #
@@ -663,7 +663,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
 
     # == Winberry == #
     # calculate moments from histogram
-    m0 = zeros(2 + (ng-1)*(ng + 1))
+    m0 = zeros(p.nparams)
     pdist = sum(omega1, dims=2)
     adist = sum(omega1, dims=1)
     m0[1] = sum(pdist .* pgrid)
@@ -694,15 +694,17 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     iter = 0;
 
     # some initial guesses for g
-    gprev = 0.2 * ones(p.ng*(p.ng+1) - 1)
+    gprev = 0.2 * ones(p.nparams)
 
     while (error > tol) && (iter < maxiter)
 
         # find parameters
         result = optimize(
             x -> objectiveDensity(x, m0, p),
+            (G,x) -> getDensityG!(G, x, m0, p),
             gprev,
-            Optim.Options(x_tol=1e-8, f_tol=1e-8, g_tol=1e-8, iterations=100_000)
+            AdaMax(),
+            Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=1_000_000)
         )
         gest = Optim.minimizer(result)
         densityOut = Optim.minimum(result)
@@ -715,7 +717,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         # iterate LOM
         m1 = iterateDist(g0, gest, m0, polp, pollamb, params, 0.0, 1.0)
         error = maximum(abs.(m1 - m0))
-        m0 = m1
+        m0 = dampening * m1 + (1.0 - dampening) * m0
         iter += 1
         gprev = gest
 
@@ -733,8 +735,10 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     # get the parameters for final output
     result = optimize(
         x -> objectiveDensity(x, m0, p),
+        (G,x) -> getDensityG!(G, x, m0, p),
         gprev,
-        Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000)
+        AdaMax(),
+        Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=1_000_000)
     )
     gest = Optim.minimizer(result)
     densityOut = Optim.minimum(result)
@@ -759,6 +763,9 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.05,
     ahi = maximum(agrid)
     pgrid_quad = scaleUp(xquad, plo, phi)
     agrid_quad = scaleUp(xquad, alo, ahi)
+    pscale = (phi - plo)/2.0
+    ascale = (ahi - alo)/2.0
+
 
     # gettngg value funcion
     w0 = winit;
@@ -795,6 +802,7 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.05,
                 Yimplied += pval ^ (-p.ϵ) * density
             end
         end
+        Yimplied *= pscale * ascale
 
         # get profits to give HH
         # get aggregate fixed cost payments
@@ -825,6 +833,8 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.05,
                 end
             end
         end
+        F *= pscale * ascale
+        Ld *= pscale * ascale
 
         C = Yimplied - F
         w_implied = p.ζ * Ld^(1/p.ν) * C
@@ -884,36 +894,33 @@ function residequations(Xl, X,
                 p, yss )
     
     # default params
-    @unpack np, na, ng = p
+    @unpack np, na, ng, nparams, agrid, pgrid, plo, phi, 
+        xquad, wquad, nquad, ngh, xgh, wgh, ρ, σ = p
+
+    alo = minimum(agrid)
+    ahi = maximum(agrid)
+    pgrid_quad = scaleUp(xquad, plo, phi)
+    pscale = (phi - plo)/2.0
+    agrid_quad = scaleUp(xquad, alo, ahi)
+    ascale = (ahi - alo)/2.0
 
     sizeval = np * na
-    sizedist = ng * (ng + 1)
 
     # unpacking distributions
     g0_l = Xl[1]
     g0 = X[1]
-    gmat_l = zeros(ng, ng+1)
-    gmat_l[1, (2:end)] = Xl[2:(ng+1)]
-    gmat_l[(2:end), :] = reshape(Xl[(ng+2):(ng+2+ng^2)], ng-1, ng+1)
+    g_l = Xl[2:(1+nparams)]
+    g = X[2:(1+nparams)]
 
-    gmat = zeros(ng, ng+1)
-    gmat[1, (2:end)] = X[2:(ng+1)]
-    gmat[(2:end), :] = reshape(X[(ng+2):(ng+2+ng^2)], ng-1, ng+1)
-
-    m0 = zeros(ng, ng+1)
-    m0[1, (2:end)] = Xl[(ng+ng^2+3):(2*ng+ng^2+3)]
-    m0[(2:end), :] = reshape(Xl[(2*ng+ng^2+4):(2*ng+2*ng^2+4)], ng-1, ng+1)
-
-    m1 = zeros(ng, ng+1)
-    m1[1, (2:end)] = X[(ng+ng^2+3):(2*ng+ng^2+3)]
-    m1[(2:end), :] = reshape(X[(2*ng+ng^2+4):(2*ng+2*ng^2+4)], ng-1, ng+1)
+    m0 = Xl[(2+nparams):(2+2*nparams-1)]
+    m1 = X[(2+nparams):(2+2*nparams-1)]
 
     # unpacking value functions
-    V_l = reshape(Xl[(ng+2+ng^2+1):(ng+2+ng^2+1+sizeval)], np, na)
-    V = reshape(X[(ng+2+ng^2+1):(ng+2+ng^2+1+sizeval)], np, na)
+    V_l = reshape(Xl[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
+    V = reshape(X[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
 
-    wl, rl, Yl, Cl, Zl  = Xl[(ng+2+ng^2+1+sizeval):(end-1)]
-    w, r, Y, C, Z = X[(ng+2+ng^2+1+sizeval):(end-1)]
+    wl, rl, Yl, Cl, Zl  = Xl[(2+2*nparams+sizeval):(end-1)]
+    w, r, Y, C, Z = X[(2+2*nparams+sizeval):(end-1)]
     infl_l = Xl[end]
     infl = X[end]
 
@@ -937,23 +944,19 @@ function residequations(Xl, X,
     ==#
     # this gives distribution at the start for period t before period t shocks
     # have been realized
-    m1_check = iterateDist(g0_l, gmat_l, m0, polp_l_check, pollamb_l, params, infl, Zl)
+    m1_check = iterateDist(g0_l, g_l, m0, polp_l_check, pollamb_l, p, infl, Z)
     # get the parameters for final output
     result = optimize(
-        x -> objectiveDensity(x, m1_check, p),
-        gmat[2:end],
-        Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000)
+        x -> objectiveDensity(x, m1, p),
+        (G,x) -> getDensityG!(G, x, m1, p),
+        g_l,
+        AdaMax(),
+        Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=1_000_000)
     )
-    g_vec = Optim.minimizer(result)
+    
+    gcheck = Optim.minimizer(result)
     densityOut = Optim.minimum(result)
-    if Optim.converged(result) == false
-        @error "Optimizer failed to get distributional parameters"
-        @show m0
-    end
-    g0_check = 1.0 / densityOut
-    gmat_check = zeros(ng, ng+1)
-    gmat_check[1, (2:end)] = g_vec[1:ng]
-    gmat_check[(2:end), :] = reshape(g_vec[(ng+1):end], ng-1, ng+1)
+    g0 = 1.0 / densityOut
 
     #== 
     compute implied values from distribution
@@ -965,10 +968,11 @@ function residequations(Xl, X,
         for aidx in 1:nquad
             pval = pgrid_quad[pidx]
             aval = agrid_quad[aidx]
-            density = getDensity(pval, aval, moments, g, g0, params) * wquad[pidx] * wquad[aidx]
+            density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
             Yimplied += pval ^ (-p.ϵ) * density
         end
     end
+    Yimplied *= pscale * ascale
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -988,7 +992,7 @@ function residequations(Xl, X,
         for aidx = 1:nquad
             pval = pgrid_quad[pidx]
             aval = agrid_quad[aidx]
-            density = getDensity(pval, aval, moments, gmat, g0) * wquad[pidx] * wquad[aidx]
+            density = getDensity(pval, aval, m1, g, g0, p) * wquad[pidx] * wquad[aidx]
             Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * density
 
             # F is done after realizing shocks
@@ -999,6 +1003,8 @@ function residequations(Xl, X,
             end
         end
     end
+    F *= pscale * ascale
+    Ld *= pscale * ascale
 
     # monetary policy
     # talor rule
@@ -1016,15 +1022,15 @@ function residequations(Xl, X,
 
     # distributions
     residvector[1] = g0 - g0_l
-    residvector[2:(ng+1)] = gmat_check[1, (2:end)] - gmat[1, (2:end)]
-    residvector[(ng+2):(ng+2+ng^2)] = gmat_check[(2:end), :] - gmat[(2:end), :]
-    residvector[(ng+ng^2+3):(2*ng+ng^2+3)] = vec(m1_check) - vec(m1)
+    residvector[2:(1+nparams)] = gcheck - g
+    residvector[(2+nparams):(2+2*nparams-1)] = vec(m1_check) - vec(m1)
 
     # value function
-    residvector[(ng+2+ng^2+1):(ng+2+ng^2+1+sizeval)] = vec(V_l) - vec(V_l_check)
+    residvector[(2+2*nparams):(2+2*nparams+sizeval-1)] = vec(V_l) - vec(V_l_check)
+
 
     # other errors
-    residvector[(ng+2+ng^2+1+sizeval):end] = [w-w_implied,Y-Yimplied,
+    residvector[(2+2*nparams+sizeval):end] = [w-w_implied,Y-Yimplied,
                                         euler_error,cerror,
                                         mon_pol_error,
                                         zerror]
