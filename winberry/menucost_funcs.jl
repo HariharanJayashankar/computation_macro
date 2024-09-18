@@ -564,7 +564,7 @@ end
 Iterate parametrized distribution by one period using policy rules,
 the distribution parameters and the starting moments
 ==#
-function iterateDist(g0, g, m0, polp, pollamb, params, infl, Z)
+function iterateDist(g0, g, m0, polp, pollamb, params, infl, Zl, Z)
 
     @unpack np, na, plo, phi, pgrid, agrid, ng, 
         nquad, xquad, wquad, ngh, xgh, wgh,
@@ -592,6 +592,7 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Z)
 
             pval = pgrid_quad[pidx]
             aval = agrid_quad[aidx]
+            aval = log(Zl) + aval
 
             # iterate over next a
             for epsidx = 1:ngh
@@ -616,7 +617,7 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Z)
                 for i=2:ng
                     for j=0:i
                         idx += 1
-                        m1[idx] = ((p1val - m1[1])^(i-j)) * ((a1val - m1[2])^j) * wquad[pidx] * wquad[aidx] * wgh[epsidx]
+                        m1[idx] = ((p1val - m1[1])^(i-j)) * ((a1val - m1[2])^j) * density
                     end
                 end
 
@@ -715,7 +716,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         g0 = 1.0 / densityOut
 
         # iterate LOM
-        m1 = iterateDist(g0, gest, m0, polp, pollamb, params, 0.0, 1.0)
+        m1 = iterateDist(g0, gest, m0, polp, pollamb, params, 0.0, 1.0, 1.0)
         error = maximum(abs.(m1 - m0))
         m0 = dampening * m1 + (1.0 - dampening) * m0
         iter += 1
@@ -752,7 +753,7 @@ end
 #==
 Find equilibiurm Y and w to clear steady state
 ==#
-function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.05,
+function findEquilibrium_ss(p; winit=1, tol=1e-3, max_iter=200, deltaw=0.05,
                             Yinit=1, deltaY=0.05,
                             printinterval=10)
     
@@ -916,11 +917,16 @@ function residequations(Xl, X,
     m1 = X[(2+nparams):(2+2*nparams-1)]
 
     # unpacking value functions
-    V_l = reshape(Xl[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
-    V = reshape(X[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
+    Vadj_l = reshape(Xl[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
+    Vadj = reshape(X[(2+2*nparams):(2+2*nparams+sizeval-1)], np, na)
+    Vnoadj_l = reshape(Xl[(2+2*nparams+sizeval):(1+2*nparams+2*sizeval)], np, na)
+    Vnoadj = reshape(X[(2+2*nparams+sizeval):(1+2*nparams+2*sizeval)], np, na)
 
-    wl, rl, Yl, Cl, Zl  = Xl[(2+2*nparams+sizeval):(end-1)]
-    w, r, Y, C, Z = X[(2+2*nparams+sizeval):(end-1)]
+    polp_l = reshape(Xl[(2+2*nparams+sizeval):(1+2*nparams+2*sizeval)], np, na)
+    polp = reshape(X[(2+2*nparams+sizeval):(1+2*nparams+2*sizeval)], np, na)
+
+    wl, rl, Yl, Cl, Zl  = Xl[(2+2*nparams+2*sizeval):(end-1)]
+    w, r, Y, C, Z = X[(2+2*nparams+2*sizeval):(end-1)]
     infl_l = Xl[end]
     infl = X[end]
 
@@ -934,17 +940,20 @@ function residequations(Xl, X,
     Compute Value functions given optimal adjusting price rule
     ==#
     # calculate implied polp
-    V_l_check, Vadj_l, Vnoadj_l, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
+    V = max.(Vadj, Vnoadj)
+    V_l_check, Vadj_l_check, Vnoadj_l_check, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
         (Y=Yl, w=wl), p, Zl, Z, V, infl_l, infl, stochdiscfactor = stochdiscfactor
     )
     V_l_check += ηv
+
+    pollamb = Vadj .> Vnoadj
 
     #==
     Compute Distribution checks
     ==#
     # this gives distribution at the start for period t before period t shocks
     # have been realized
-    m1_check = iterateDist(g0_l, g_l, m0, polp_l_check, pollamb_l, p, infl, Z)
+    m1_check = iterateDist(g0_l, g_l, m0, polp_l_check, pollamb_l, p, infl, Zl, Z)
     # get the parameters for final output
     result = optimize(
         x -> objectiveDensity(x, m1, p),
@@ -956,7 +965,7 @@ function residequations(Xl, X,
     
     gcheck = Optim.minimizer(result)
     densityOut = Optim.minimum(result)
-    g0 = 1.0 / densityOut
+    g0_check = 1.0 / densityOut
 
     #== 
     compute implied values from distribution
@@ -967,23 +976,23 @@ function residequations(Xl, X,
     for pidx in 1:nquad
         for aidx in 1:nquad
             pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
-            density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
+            aval = log(Z) + agrid_quad[aidx]
+            density = getDensity(pval, aval, m1, g, g0, p) * wquad[pidx] * wquad[aidx]
             Yimplied += pval ^ (-p.ϵ) * density
         end
     end
-    Yimplied *= pscale * ascale
+    Yimplied *= pscale * ascale * Y
 
     # get profits to give HH
     # get aggregate fixed cost payments
     # get labour demand
     # integrate
     # interpolate pol
-    itp = interpolate(pgrid[polp_l_check], (BSpline(Linear()), BSpline(Linear())))
+    itp = interpolate(pgrid[polp], (BSpline(Linear()), BSpline(Linear())))
     eitp = extrapolate(itp, Line())
     polp_interp = Interpolations.scale(eitp, pgrid, agrid)
 
-    itp = interpolate(pollamb_l, (BSpline(Constant()), BSpline(Constant())))
+    itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
     eitp = extrapolate(itp, Line())
     pollamb_interp = Interpolations.scale(eitp, pgrid, agrid)
     Ld = 0.0
@@ -991,15 +1000,17 @@ function residequations(Xl, X,
     for pidx = 1:nquad
         for aidx = 1:nquad
             pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
+            aval = log(Zl) + agrid_quad[aidx]
             density = getDensity(pval, aval, m1, g, g0, p) * wquad[pidx] * wquad[aidx]
-            Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * density
 
             # F is done after realizing shocks
             for epsidx = 1:ngh
                 epsval = xgh[epsidx]
-                a1val = ρ*aval + σ*epsval
-                F += p.κ * pollamb_interp(pval, a1val)*density*wgh[epsidx] # who adjusts in a period
+                a1val = log(Z) + ρ*aval + σ*epsval
+                pchange =  pollamb_interp(pval, a1val)
+                p1val = pchange * polp_interp(pval, a1val) + (1.0 - pchange)*pval
+                F += p.κ * pchange*density*wgh[epsidx] # who adjusts in a period
+                Ld += p1val^(-p.ϵ) * exp(-a1val) * Yl * density*wgh[epsidx]
             end
         end
     end
@@ -1011,7 +1022,7 @@ function residequations(Xl, X,
     r_val = rl +  p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + ϵ[2]
     mon_pol_error = r_val - r
 
-    cerror = C - Yimplied + F
+    cerror = C - Y + F
     w_implied = p.ζ * Ld^(1/p.ν) * C
     euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C) - η_ee
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
@@ -1021,16 +1032,17 @@ function residequations(Xl, X,
     residvector = zero(X)
 
     # distributions
-    residvector[1] = g0 - g0_l
+    residvector[1] = g0_check - g0
     residvector[2:(1+nparams)] = gcheck - g
     residvector[(2+nparams):(2+2*nparams-1)] = vec(m1_check) - vec(m1)
 
     # value function
-    residvector[(2+2*nparams):(2+2*nparams+sizeval-1)] = vec(V_l) - vec(V_l_check)
+    residvector[(2+2*nparams):(2+2*nparams+sizeval-1)] = vec(Vadj_l) - vec(Vadj_l_check)
+    residvector[(2+2*nparams+sizeval):(1+2*nparams+2*sizeval)] = vec(Vnoadj_l) - vec(Vnoadj_l_check)
 
 
     # other errors
-    residvector[(2+2*nparams+sizeval):end] = [w-w_implied,Y-Yimplied,
+    residvector[(2+2*nparams+2*sizeval):end] = [w-w_implied,Y-Yimplied,
                                         euler_error,cerror,
                                         mon_pol_error,
                                         zerror]

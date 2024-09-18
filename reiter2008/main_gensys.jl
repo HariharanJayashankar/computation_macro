@@ -1,7 +1,6 @@
 using MKL
 using Plots
 using JLD2
-using lti
 
 include("menucost_funcs.jl")
 include("gensysdt.jl")
@@ -47,7 +46,7 @@ p = params()
 
 
 # equilibrium
-w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
+w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex; deltaY=0.05, deltaw=0.05)
 Vout = max.(Vadjust, Vnoadjust)
 
 pdist = sum(omega, dims=2)
@@ -58,6 +57,8 @@ sizedist = p.na * p.np
 xss = [
     omega...,
     Vout...,
+    p.pgrid[polp]...,
+    pollamb...,
     w,
     p.iss,
     Y,

@@ -41,7 +41,7 @@ params = @with_kw (
     phi = 2.0*pflex,
     pgrid = range(plo, phi, length=np),
     ρ_agg = 0.9,
-    ng = 2,
+    ng = 5,
     nparams = 2 + sum([(i+1 for i=2:ng)...]),
     nquad = 10,
     ngh=3,
@@ -58,82 +58,6 @@ params = @with_kw (
 p = params()
 
 
-# manually testing winbrry
-# m0 = ones(p.nparams)
-# gprev = -0.02 * ones(p.nparams)
-# gprev = zeros(2 + (p.ng-1)*(p.ng + 1))
-m0 = rand(p.nparams)
-gprev = -1e-2 * ones(p.nparams)
-objectiveDensity(gprev, m0, p)
-
-# is my gradient correct?
-using ForwardDiff
-fwd = ForwardDiff.gradient(x -> objectiveDensity(x, m0, p), gprev)
-G = zero(m0)
-getDensityG!(G, gprev, m0, p)
-
-maximum(abs.(G - fwd))
-# seems right
-
-# does my integration look righT?
-#test for int_-2^2 x^2 dx = 16/3
-xlo = -2.0
-xhi = 2.0
-xgrid_scaled = scaleUp(p.xquad, xlo, xhi)
-scaling_factor = (xhi - xlo)/2.0
-f(x) = x.^2
-(p.wquad ⋅ f.(xgrid_scaled)) * scaling_factor
-16/3
-# my understandding seems right!
-
-
-
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    Optim.Options(x_tol=1e-8, f_tol=1e-8, g_tol=1e-8, iterations=100_000)
- )
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    LBFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
-)
-Optim.minimizer(result)
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    (G,x) -> getDensityG!(G, x, m0, p),
-    gprev,
-    BFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
-)
-@show Optim.converged(result)
-gest = Optim.minimizer(result)
-densityOut = Optim.minimum(result)
-# g0 = 1.0 / densityOut
-g0 = 1.0
-
-# see if this density gives back similar moments
-alo = minimum(p.agrid)
-ahi = maximum(p.agrid)
-pgrid_quad = scaleUp(p.xquad, p.plo, p.phi)
-agrid_quad = scaleUp(p.xquad, alo, ahi)
-meanp = 0.0
-meana = 0.0
-for pidx = 1:p.nquad
-    for aidx = 1:p.nquad
-        pval = pgrid_quad[pidx]
-        aval = agrid_quad[aidx]
-
-        density = getDensity(pval, aval, m0, gest, g0, p) * p.wquad[pidx] * p.wquad[aidx]
-        meanp += density * pval
-        meana += density * aval
-    end
-end
-@show abs(meanp - m0[1])
-@show abs(meana - m0[2])
-
-
 # equilibrium
 w0, Y0, Vadjust, Vnoadjust, polp, pollamb,  moments, g, g0, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex)
 Vout = max.(Vadjust, Vnoadjust)
@@ -148,46 +72,37 @@ for i=1:1000
     for j=1:1000
         pval = pgrid_fine[i]
         aval = agrid_fine[j]
-        dist[i,j] = getDensity(pval, aval, moments, g, g0, params)
+        dist[i,j] = getDensity(pval, aval, moments, g, g0, p)
     end
 end
 
-heatmap(dist)
+heatmap(exp.(agrid_fine), pgrid_fine, dist, xlabel="Shock", ylabel="Price")
 
 
 # testing reiter resid
 sizeval = p.na * p.np
-sizedist = p.ng * (p.ng + 1)
+sizedist = p.nparams
 xss = [
     g0,
-    gmat...,
+    g...,
     moments...,
-    Vout...,
-    w,
+    Vadjust...,
+    Vnoadjust...,
+    w0,
     p.iss,
-    Y,
+    Y0,
     C,
     1.0,
     1e-9
 ]
-ηss = zeros(1*sizedist+1)
+ηss = zeros(sizeval+1)
 ϵ_ss = zeros(2)
 
-Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
-if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p, Y), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p, Y), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p, Y), ηss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p, Y), ϵ_ss)
-    jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
-else
-    println("Reading Jacobians...")
-    H1, H2, H3, H4 = load("solnmatrices.jld2", H1, H2, H3, H4)
-    H1 = collect(H1)
-    H2 = collect(H2)
-    H3 = collect(H3)
-    H4 = collect(H4)
-end
+Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y0)
+H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p, Y0), xss)
+H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p, Y0), xss)
+H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p, Y0), ηss)
+H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p, Y0), ϵ_ss)
 
 println("Running Gensys")
 G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(xss,1)), H4, H3)
