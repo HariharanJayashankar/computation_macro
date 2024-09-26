@@ -1,6 +1,8 @@
 using MKL
 using Plots
 using JLD2
+using Optim
+
 
 include("menucost_funcs.jl")
 include("gensysdt.jl")
@@ -38,7 +40,7 @@ params = @with_kw (
     Y_flex = flexsoln[5],
     pss = log.(pflex),
     plo = 0.5*pflex,
-    phi = 2.0*pflex,
+    phi = 2.2*pflex,
     pgrid = range(plo, phi, length=np),
     ρ_agg = 0.9
 )
@@ -46,9 +48,23 @@ p = params()
 
 
 # equilibrium
-w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=p.Y_flex; deltaY=0.05, deltaw=0.05)
-Vout = max.(Vadjust, Vnoadjust)
+# w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C, iter, error = findEquilibrium_ss(p, winit=p.w_flex, Yinit=0.5; deltaY=0.05, deltaw=0.05)
+result = optimize(x -> equilibriumResidual(x, p)[1], [1.0, 1.0])
+w, Y = Optim.minimizer(result)
+error, w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C = equilibriumResidual([w,Y], p)
+pdist = sum(omega, dims=2)
+heatmap(p.agrid, p.pgrid, omega)
+plot(p.pgrid, pdist)
+Vout = max.(repeat(Vadjust', p.np, 1), Vnoadjust)
 
+# interpolate the policies
+itp = interpolate(p.pgrid[polp], (BSpline(Linear())))
+eitp = extrapolate(itp, Line())
+polp_interp = Interpolations.scale(eitp, p.agrid)
+
+itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
+eitp = extrapolate(itp, Line())
+pollamb_interp = Interpolations.scale(eitp, p.pgrid, p.agrid)
 pdist = sum(omega, dims=2)
 plot(p.pgrid, pdist)
 
@@ -56,9 +72,9 @@ plot(p.pgrid, pdist)
 sizedist = p.na * p.np
 xss = [
     omega...,
-    Vout...,
-    p.pgrid[polp]...,
-    pollamb...,
+    Vadjust..., # Vadjust only varies by a
+    vec(p.pgrid[polp])..., # polp only cahnges by a
+    Vnoadjust...,
     w,
     p.iss,
     Y,
@@ -66,27 +82,22 @@ xss = [
     1.0,
     1e-9
 ]
-ηss = zeros(1*sizedist+1)
+ηss = zeros(2*p.na + sizedist + 1)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
-if !read_jacob
-    H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p, Y), xss)
-    H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p, Y), xss)
-    H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p, Y), ηss)
-    H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p, Y), ϵ_ss)
-    jldsave("solnmatrices.jld2"; H1, H2, H3, H4)
-else
-    println("Reading Jacobians...")
-    H1, H2, H3, H4 = load("solnmatrices.jld2", H1, H2, H3, H4)
-    H1 = collect(H1)
-    H2 = collect(H2)
-    H3 = collect(H3)
-    H4 = collect(H4)
-end
+@show maximum(abs.(Fout))
+findall(abs.(Fout) .≈ maximum(abs.(Fout)))
+H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, p, Y), xss)
+H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, p, Y), xss)
+H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, p, Y), ηss)
+H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, p, Y), ϵ_ss)
+
 
 println("Running Gensys")
 G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(xss,1)), H4, H3)
+@show eu
+
 
 
 println("Making plots...")
@@ -106,7 +117,7 @@ for t=1:Tirf
     end
 end
 
-irf_vars = irf[(2*sizedist+1):end, :]
+irf_vars = irf[(end-5):end, :]
 
 pw = plot(1:(Tirf), irf_vars[1, :], title="Wage")
 pr = plot(1:(Tirf), irf_vars[2, :], title="Interest Rate")
@@ -116,7 +127,7 @@ pZ = plot(1:(Tirf), irf_vars[5, :], title="TFP")
 # pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
 pinfl = plot(1:(Tirf), irf_vars[6, :], title="Inflation")
 plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
-savefig("tfp_shock.png")
+savefig("reiter2008/tfp_shock.png")
 
 # monetary policy SHOCK
 ϵ_mon_irf = zeros(2, Tirf)
@@ -130,7 +141,7 @@ for t=1:Tirf
     end
 end
 
-irf_vars = irf[(2*sizedist+1):end, :]
+irf_vars = irf[(end-5):end, :]
 pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
 pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
 pY = plot(1:Tirf, irf_vars[3, :], title="Output")
@@ -139,4 +150,4 @@ pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
 # pZmon = plot(1:Tirf, irf_vars[6, :], title="TR Shock")
 pinfl = plot(1:Tirf, 100.0 * (exp.(irf_vars[6, :]) .- 1.0), title="Inflation (%)")
 plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
-savefig("mon_shock.png")
+savefig("reiter2008/mon_shock.png")
