@@ -125,7 +125,7 @@ pY = plot(1:(Tirf), irf_vars[3, :], title="Output")
 pC = plot(1:(Tirf), irf_vars[4, :], title="Consumption")
 pZ = plot(1:(Tirf), irf_vars[5, :], title="TFP")
 # pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
-pinfl = plot(1:(Tirf), irf_vars[6, :], title="Inflation")
+pinfl = plot(1:(Tirf), 100.0 * (exp.(irf_vars[6, :]) .- 1.0), title="Inflation (%)")
 plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
 savefig("reiter2008/tfp_shock.png")
 
