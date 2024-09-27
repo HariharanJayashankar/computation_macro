@@ -26,6 +26,7 @@ params = @with_kw (
     m =  3, # tauchen grid distance
     na = 10, #number of grids in shock
     np = 200, # number of price grids
+    np_fine = 500, # number of price grids on histogram
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
     shock = tauchen(na, ρ, σ, 0.0, m),
@@ -42,6 +43,7 @@ params = @with_kw (
     plo = 0.5*pflex,
     phi = 2.2*pflex,
     pgrid = range(plo, phi, length=np),
+    pgrid_fine = range(plo, phi, length=np_fine),
     ρ_agg = 0.9
 )
 p = params()
@@ -53,27 +55,17 @@ result = optimize(x -> equilibriumResidual(x, p)[1], [1.0, 1.0])
 w, Y = Optim.minimizer(result)
 error, w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C = equilibriumResidual([w,Y], p)
 pdist = sum(omega, dims=2)
-heatmap(p.agrid, p.pgrid, omega)
-plot(p.pgrid, pdist)
+heatmap(p.agrid, p.pgrid_fine,omega)
+plot(p.pgrid_fine, pdist)
 Vout = max.(repeat(Vadjust', p.np, 1), Vnoadjust)
 
-# interpolate the policies
-itp = interpolate(p.pgrid[polp], (BSpline(Linear())))
-eitp = extrapolate(itp, Line())
-polp_interp = Interpolations.scale(eitp, p.agrid)
-
-itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
-eitp = extrapolate(itp, Line())
-pollamb_interp = Interpolations.scale(eitp, p.pgrid, p.agrid)
-pdist = sum(omega, dims=2)
-plot(p.pgrid, pdist)
-
 # testing reiter resid
-sizedist = p.na * p.np
+sizedist = p.na * p.np_fine
+sizev = p.na * p.np
 xss = [
     omega...,
     Vadjust..., # Vadjust only varies by a
-    vec(p.pgrid[polp])..., # polp only cahnges by a
+    vec(polp)..., # polp only cahnges by a
     Vnoadjust...,
     w,
     p.iss,
@@ -82,7 +74,7 @@ xss = [
     1.0,
     1e-9
 ]
-ηss = zeros(2*p.na + sizedist + 1)
+ηss = zeros(2*p.na + sizev + 1)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
