@@ -161,7 +161,7 @@ end
 Backward induction of V - for when we know tomorrow's value function 
 infl = log(P_t/P_{t-1})
 ==#
-function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f; 
+function  vBackwardFirm(agg, params, Z, v1, infl;
                         stochdiscfactor = 1.0,
                         maxiter=10000, tol=1e-6, 
                         printinterval=1000, printinfo=true) 
@@ -197,7 +197,7 @@ function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f;
             pval = pgrid[pidx]
             pval_adj = pval / (1.0 + infl)
 
-            aval = log(Z_f) + agrid[aidx]
+            aval = agrid[aidx]
             v1_infl[pidx, aidx] = v1interp(pval_adj, aval)
             v1_noinfl[pidx, aidx] = v1interp(pval, aval)
         end
@@ -228,7 +228,7 @@ function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f;
     eitp = extrapolate(itp, Line())
     pollamb_interp = Interpolations.scale(eitp, p.pgrid, p.agrid)
 
-    return vout, vadjust, vnoadjust, polp_interp, pollamb_interp, iter, error
+    return vout, vadjust, vnoadjust, p.pgrid[polp], pollamb_interp, iter, error
 
 end
 
@@ -550,6 +550,9 @@ function equilibriumResidual(x, p)
     Y = x[2]
     agg = (w=w, Y=Y);
     V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
+    itp = interpolate(polp, (BSpline(Cubic())))
+    eitp = extrapolate(itp, Line())
+    polp_l_interp = Interpolations.scale(eitp, p.agrid)
 
     # get joint distribution of prices and shocks
     omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
@@ -638,28 +641,20 @@ function residequations(Xl, X,
     omega_l = reshape(Xl[1:sizedist], np_fine, na)
     omega = reshape(X[1:sizedist], np_fine, na)
 
-    Vadj_l = Xl[(sizedist+1):(sizedist+na)]
-    Vadj = X[(sizedist+1):(sizedist+na)]
+    Vl = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
+    V = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
 
-    polp_l = Xl[(sizedist + na + 1):(sizedist + 2*na)]
-    polp = X[(sizedist + na + 1):(sizedist + 2*na)]
-
-    Vnoadj_l = reshape(Xl[(sizedist+2*na + 1):(sizedist+2*na+sizev)], np, na)
-    Vnoadj = reshape(X[(sizedist+2*na + 1):(sizedist+2*na+sizev)], np, na)
-
-
-    wl, rl, Yl, Cl, Zl  = Xl[(sizedist+2*na+sizev + 1):(end-1)]
-    w, r, Y, C, Z = X[(sizedist+2*na+sizev + 1):(end-1)]
+    wl, rl, Yl, Cl, Zl  = Xl[(sizedist+sizev+1):(end-1)]
+    w, r, Y, C, Z = X[(sizedist+sizev+1):(end-1)]
     infl_l = Xl[end]
     infl = X[end]
 
     # expectation errors
-    ηv_adj = η[1:na]
-    η_polp = η[(na+1):2*na]
-    ηv_noadj = reshape(η[(2*na+1):(2*na + sizev)], np, na)
+    ηv = reshape(η[1:sizev], np, na)
+    # η_polp = η[(na+1):2*na]
+    # ηv_noadj = reshape(η[(2*na+1):(2*na + sizev)], np, na)
     # ηv_noadj = reshape(η[(na+1):(na + sizedist)], np, na)
-    η_ee = η[2*na + sizev + 1]
-
+    η_ee = η[sizev + 1]
 
 
     #==
@@ -667,47 +662,27 @@ function residequations(Xl, X,
     ==#
     stochdiscfactor = Cl/C
     # calculate implied polp
-    Vadj_mat = repeat(Vadj', np, 1)
-    V = max.(Vadj_mat, Vnoadj)
     V_l_check, Vadj_l_check, Vnoadj_l_check, polp_l_check, pollamb_l_check, _, _ = vBackwardFirm(
-        (Y=Yl, w=wl), p, Zl, Z, V, infl_l, infl, stochdiscfactor = stochdiscfactor
+        (Y=Y, w=w), p, Z, V, infl, stochdiscfactor = stochdiscfactor
     )
-    Vadj_l_check += ηv_adj
-    Vnoadj_l_check += ηv_noadj
-    polp_l_check_vec = vec(polp_l_check) + η_polp
 
-    # interpolate the policies
-    itp = interpolate(polp, (BSpline(Cubic())))
+    V_l_check += ηv
+    itp = interpolate(polp_l_check, (BSpline(Cubic())))
     eitp = extrapolate(itp, Line())
-    polp_interp = Interpolations.scale(eitp, p.agrid)
+    polp_l_interp = Interpolations.scale(eitp, p.agrid)
 
-    pollamb = Vadj_mat .> Vnoadj
-    itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
-    eitp = extrapolate(itp, Line())
-    pollamb_interp = Interpolations.scale(eitp, p.pgrid, p.agrid)
 
     #==
     Compute Distribution checks
     ==#
     # this gives distribution at the start for period t before period t shocks
     # have been realized
-    omega1, omega0hat = Tfunc_general(omega_l, polp_l_check, pollamb_l_check, p, p.np_fine, infl_l, Zl)
-    omega1hat = Tfunc_updateshocks(omega1, p, p.np_fine, Z)
+    omega1, omega0hat = Tfunc_general(omega_l, polp_l_interp, pollamb_l_check, p, p.np_fine, infl, Z)
+    # omega1hat = Tfunc_updateshocks(omega1, p, p.np_fine, Z)
 
     # get implied aggregate Y
-    aggprice = 0.0
-    for pidx=1:p.np_fine
-        for aidx = 1:p.na
-            pval = p.pgrid_fine[pidx]
-            aval = log(Z) + p.agrid[aidx]
-            pchange = pollamb_interp(pval, aval)
-            p1val = pchange * polp_interp(aval)  + (1.0 - pchange) * (pval / (1.0 + infl))
-
-            aggprice += p1val ^ (1.0 - p.ϵ) * omega1hat[pidx, aidx] 
-            # aggprice += pval ^ (1.0 - p.ϵ) * omega1hat[pidx, aidx] 
-        end
-    end
-    aggprice = (aggprice^(1.0/(1.0-p.ϵ)))
+    pdist_l = sum(omega1, dims=2)
+    aggprice_l = (sum((p.pgrid_fine).^(1.0-p.ϵ) .* pdist_l))^(1.0/(1.0 - p.ϵ))
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -718,12 +693,11 @@ function residequations(Xl, X,
     for pidx = 1:p.np_fine
         for aidx = 1:p.na
             pval = p.pgrid_fine[pidx]
-            a1val = log(Z) + p.agrid[aidx]
-            pchange = pollamb_interp(pval, a1val)
-            p1val = pchange * polp_interp(a1val) + (1.0 - pchange)*(pval / (1.0 + infl))
+            aval = p.agrid[aidx]
+            pchange = pollamb_l_check(pval, aval)
 
-            F += p.κ * pchange * omega1hat[pidx, aidx]
-            Ld += p1val^(-p.ϵ) * exp(-a1val) * Y * omega1hat[pidx,aidx]
+            F += p.κ * pchange * omega0hat[pidx, aidx]
+            Ld += pval^(-p.ϵ) * exp(-aval) * Y * omega1[pidx,aidx]
         end
     end
 
@@ -741,13 +715,11 @@ function residequations(Xl, X,
     # == residual vector == #
     residvector = zero(X)
     residvector[1:sizedist] = vec(omega1 - omega)
-    residvector[(sizedist+1):(sizedist+na)] = vec(Vadj_l_check - Vadj_l)
-    residvector[(sizedist + na + 1):(sizedist + 2*na)] = vec(polp_l - polp_l_check_vec)
-    residvector[(sizedist+2*na + 1):(sizedist+2*na+sizev)] = vec(Vnoadj_l_check - Vnoadj_l)
+    residvector[(sizedist+1):(sizedist+sizev)] = vec(V_l_check - Vl)
 
 
     # other error
-    residvector[(sizedist+2*na+sizev+1):end] = [w-w_implied,1.0 - aggprice,
+    residvector[(sizedist+sizev+1):end] = [w-w_implied,1.0 - aggprice_l,
                                         euler_error,cerror,
                                         mon_pol_error,
                                         zerror]

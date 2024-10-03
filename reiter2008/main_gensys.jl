@@ -26,7 +26,7 @@ params = @with_kw (
     m =  3, # tauchen grid distance
     na = 10, #number of grids in shock
     np = 200, # number of price grids
-    np_fine = 500, # number of price grids on histogram
+    np_fine = 200, # number of price grids on histogram
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
     shock = tauchen(na, ρ, σ, 0.0, m),
@@ -59,14 +59,20 @@ heatmap(p.agrid, p.pgrid_fine,omega)
 plot(p.pgrid_fine, pdist)
 Vout = max.(repeat(Vadjust', p.np, 1), Vnoadjust)
 
+pollamb_mat = zeros(p.np_fine, p.na)
+for pidx=1:p.np_fine
+    for aidx=1:p.na
+        pollamb_mat[pidx, aidx] = pollamb(p.pgrid_fine[pidx], p.agrid[aidx])
+    end
+end
+heatmap(pollamb_mat)
+
 # testing reiter resid
 sizedist = p.na * p.np_fine
 sizev = p.na * p.np
 xss = [
     omega...,
-    Vadjust..., # Vadjust only varies by a
-    vec(polp)..., # polp only cahnges by a
-    Vnoadjust...,
+    Vout..., # Vadjust only varies by a
     w,
     p.iss,
     Y,
@@ -74,7 +80,7 @@ xss = [
     1.0,
     1e-9
 ]
-ηss = zeros(2*p.na + sizev + 1)
+ηss = zeros(sizev+ 1)
 ϵ_ss = zeros(2)
 
 Fout = residequations(xss, xss, ηss, ϵ_ss, p, Y)
