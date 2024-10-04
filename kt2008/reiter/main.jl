@@ -10,7 +10,7 @@ include("ktmod.jl")
 
 # testing firm problem
 params = paramgen(kmin=0.1, kmax=8.0)
-pinit = 2.5
+pinit = 2.3
 winit = params.phi/pinit
 agg = (A=1.0, W=winit, P=pinit)
 
@@ -48,11 +48,13 @@ V0 = V1
 # for zi = 1:params.nz
 #     V20[:, zi] = spline(params.kgrid, V0[:, zi], params.nk, 1.0e30, 1.0e30)
 # end
-plot(params.kgrid, V0[:, 3])
+plot(params.kgrid, V0[:, 3], label="overall")
+plot!(params.kgrid, Vadjust1[:, 3], label="adjust")
+plot!(params.kgrid, Vnoadjust1[:, 3], label="noadjust")
 # plot(params.zgrid, V0[5, :])
 
 
-Vadjust, Vnoadjust, Vout, kpol, xibar_mat, error, iter = viter(agg, params, learningrate=0.1)
+Vadjust, Vnoadjust, Vout, kpol, xibar_mat, error, iter = viter(agg, params)
 
 
 plot(exp.(params.zgrid), Vadjust[5, :], label="adjust")

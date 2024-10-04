@@ -39,7 +39,9 @@ paramgen = @with_kw (
     nz = 10, #number of grids in shock,
     shock = tauchen(nz, rho_z, sigma_z, 0.0, m),
     zP = shock.p,
-    zgrid = shock.state_values
+    zgrid = shock.state_values,
+    nkdense = 50,
+    kgrid_dense = exp.(range(log(kmin), log(kmax), nkdense))
 )
 
 # distribution of xi (menu cost)
@@ -312,9 +314,6 @@ function viter(agg, params;
             end
         end
 
-        Vadjust0 = deepcopy(Vadjust1)
-        Vnoadjust0 = deepcopy(Vnoadjust1)
-
         # now adjust policy
         T_adjust_max!(Vadjust1, kpol, Vold, V2old, params, agg)
         T_noadjust!(Vnoadjust1, Vold, V2old, params, agg)
@@ -326,7 +325,6 @@ function viter(agg, params;
 
         if (iter == 1 || mod(iter, printinterval) == 0) && printinfo
             println("Iterations: $iter, Error: $error")
-            @show kpol
         end
 
     end
@@ -344,11 +342,85 @@ function viter(agg, params;
 end
 
 #==
+Convert from coarse functions to fine functions
+- Gives us fine policies for kpol and xibar
+- Key calculation is in xibar
+==#
+function makedense(kpol, V, params, agg)
+
+    @unpack nkdense, nz, phi, nk, kgrid, zgrid, delta, zP, beta, kgrid_dense = params
+    P = agg.P
+
+
+    kpoldense = zeros(nkdense, nz)
+    xipol_dense = zeros(nkdense, nz)
+    
+    # placeholder value funcs
+    Vadjust = zeros(nk, nz)
+    Vnoadjust = zeros(nk, nz)
+
+    for zi = 1:nz
+        kstar = kpol[1, zi] # kpol doesnt vary by k state
+        kpoldense[:, zi] .= kstar
+        zval = exp(zgrid[zi])
+
+        for ki = 1:nkdense
+
+            kval = kgrid_dense[ki]
+
+            # adjusting
+            valadjust = P*(freduced(zval, kval, agg, params) - kstar + (1.0 - delta)*kval)
+
+            Ex = 0.0
+            for z1i = 1:nz
+                vnext_fun = interpolate(kgrid, V[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(kstar)
+            end
+
+            valadjust += beta *  Ex
+
+
+            # not adjusting
+            valnoadjust = P*(freduced(zval, kval, agg, params))
+            kval_adj = max((1.0-delta)*kval, kgrid[1])
+
+            Ex = 0.0
+            for z1i = 1:nz
+                vnext_fun = interpolate(kgrid, V[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(kval_adj)
+            end
+
+            valnoadjust += beta *  Ex
+
+            # getting xi
+            xival = (valadjust - valnoadjust)/phi
+            xipol_dense[ki, zi] = xival
+
+
+        end
+
+    end
+
+    return kpoldense, xipol_dense
+
+
+end
+#==
 Update distribution by one step
 given policy function and previous period distribution
+
+Using Young 2010 stochastic simulation update
 ==#
-function updateDist(omega0, polk, pollamb)
-    return 0
+function updateDist(omega0, kpol, xibar, params)
+
+    @unpack nk, nz, kmin, kgrid, nkdense = params
+    omega1 = zeros(nkdense, nz)
+
+
+
+    return 
 end
 
 
