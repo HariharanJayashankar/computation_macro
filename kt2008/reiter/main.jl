@@ -26,14 +26,17 @@ kpoldense, xipoldense = makedense(kpol, Vout, params, agg)
 omega0 = ones(params.nkdense, params.nz)
 omega0 = omega0 ./ sum(omega0)
 omega1 = updateDist(omega0, kpoldense, xipoldense, params)
-omegass = ssDist(kpoldense, xipoldense, params)
+omegass = ssDist(kpoldense, xipoldense, params, printinfo=true, printinterval=1)
 
 kdist0 = sum(omega0, dims=2)
 kdist1 = sum(omega1, dims=2)
 kdist2 = sum(omegass, dims=2)
 plot(params.kgrid_dense, kdist0, label="T0")
 plot!(params.kgrid_dense, kdist1, label="T1")
+plot!(params.kgrid_dense, kdist2, label="ss")
 # updates somewhat reasonably??
+
+pss = optimize(x -> ss_equil_resid(x, params), 2.15, 2.3, GoldenSection())
 
 
 

@@ -98,6 +98,42 @@ function freduced(z,k,agg,params)
 end
 
 #==
+Output function optimized for labour
+==#
+function yreduced(z,k,agg,params)
+
+    @unpack alpha, eta = params
+    A = agg.A
+    W = agg.W
+
+    exponenteta = 1.0 / (1.0 - eta)
+
+    fout = ((eta/W)^(eta*exponenteta)) * (A*z)^(exponenteta)
+    fout = fout * (k^(alpha*exponenteta))
+    return fout
+
+
+end
+
+#==
+Labour function
+==#
+function nreduced(z,k,agg,params)
+
+    @unpack alpha, eta = params
+    A = agg.A
+    W = agg.W
+
+    exponenteta = 1.0 / (1.0 - eta)
+
+    fout = (eta^exponenteta) * (W^(-1.0*exponenteta))
+    fout = fout*(z^exponenteta)*(A^exponenteta)*(k^(alpha*exponenteta))
+    return fout
+
+
+end
+
+#==
 Bellman adjustment function for a given policy function
 ==#
 function T_adjust_given!(V, kpol, Vprime, V2prime, params, agg)
@@ -534,14 +570,46 @@ Gives optimal p (which is what we actually solve for)
 function ss_equil_resid(p, params; tol=1e-4, maxiter=100, learningrate=0.1)
     
 
-    @unpack nk, nz, kmin, kgrid, nkdense, 
+    @unpack nk, nz, kmin, kgrid, nkdense, zgrid,
         kgrid_dense, xibar, kmin, kmax, zP, delta, phi = params
 
     winit = phi/p
-    agg = (A=1.0, W=winit, P=pinit)
+    agg = (A=1.0, W=winit, P=p)
 
     Vadjust, Vnoadjust, Vout, kpol, xibar_mat, error, iter = viter(agg, params)
     kpoldense, xipoldense = makedense(kpol, Vout, params, agg)
+    omegass = ssDist(kpoldense, xipoldense, params, printinfo=true, printinterval=50)
+
+    # get aggregates
+    Yagg = 0.0
+    Iagg = 0.0
+    Kagg = 0.0
+    Nagg = 0.0
+    for zi = 1:nz
+        for ki = 1:nkdense
+            zval = exp(zgrid[zi])
+            kval = kgrid_dense[ki]
+
+            kstar = kpoldense[ki, zi]
+            xistar = xipoldense[ki, zi]
+            prob_adjust = cdfxi(xistar, xibar)
+
+            yi = yreduced(zval, kval, agg, params)
+            ival = kstar - (1.0 - delta)*kval
+
+            # integrate
+            Yagg += omegass[ki, zi]*yi
+            Iagg += omegass[ki, zi]*prob_adjust*ival
+            Kagg += omegass[ki, zi]*kval
+            Nagg += omegass[ki, zi]*(nreduced(zval,kval,agg,params) + expecxi(xistar, xibar))
+
+        end
+    end
+
+    Cagg = Yagg - Iagg
+    Cerror = 1/p - Cagg
+
+    return Cerror^2
 
     return 0
 
