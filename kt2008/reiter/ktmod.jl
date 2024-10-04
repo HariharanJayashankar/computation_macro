@@ -98,7 +98,7 @@ end
 #==
 Bellman adjustment function for a given policy function
 ==#
-function T_adjust_given!(V, kpol, Vprime, V2prime, params, agg; sdf=1.0)
+function T_adjust_given!(V, kpol, Vprime, V2prime, params, agg)
 
     @unpack nk, nz, eta, kgrid, zgrid, alpha, zP, beta , delta, kmin, kmax = params
 
@@ -117,11 +117,12 @@ function T_adjust_given!(V, kpol, Vprime, V2prime, params, agg; sdf=1.0)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
-                Ex += zP[zi, z1i] * vnext
+                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(kstar)
             end
 
-            val += beta * sdf * Ex
+            val += beta *  Ex
 
             V[ki, zi] = val
 
@@ -140,7 +141,7 @@ backward induction
 V is modified - prefereably enter a zero matrix
 same shape as Vprime (tomorrows V)
 ==#
-function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg; sdf=1.0)
+function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg)
 
     @unpack nk, nz, eta, kgrid, zgrid, alpha, zP, beta , delta, kmin, kmax = params
 
@@ -162,11 +163,12 @@ function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg; sdf=1.0)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, k1)
-                Ex += zP[zi, z1i] * vnext
+                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(k1)
             end
 
-            out += beta * sdf * Ex
+            out += beta *  Ex
 
             # maximimze
             out = -1.0 * out
@@ -176,16 +178,25 @@ function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg; sdf=1.0)
 
         result = optimize(objective, kmin, kmax, Brent())
         kstar = Optim.minimizer(result)
-        val = -1.0 * Optim.minimum(result)
+        kpol[:, zi] .= kstar
 
         for ki = 1:nk
 
             kval = kgrid[ki]
 
-            val += P*(freduced(zval, kval, agg, params) + (1.0 - delta)*kval)
+            val = P*(freduced(zval, kval, agg, params))
+            val = val - P*(kstar - (1.0 - delta) * kval)
+
+            Ex = 0.0
+            for z1i = 1:nz
+                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(kstar)
+            end
+
+            val += beta * Ex
 
             V[ki, zi] = val
-            kpol[ki, zi] = kstar
 
         end
     end
@@ -201,7 +212,7 @@ backward induction
 V is modified - prefereably enter a zero matrix
 same shape as Vprime (tomorrows V)
 ==#
-function T_noadjust!(V, Vprime, V2prime, params, agg; sdf=1.0)
+function T_noadjust!(V, Vprime, V2prime, params, agg)
 
     @unpack nk, nz, eta, kgrid, zgrid, alpha, zP, beta , delta = params
 
@@ -209,31 +220,26 @@ function T_noadjust!(V, Vprime, V2prime, params, agg; sdf=1.0)
     A = agg.A
     W = agg.W
 
-    # k declines next period if we dont adjust
-    v1_adj = zeros(eltype(Vprime), nk, nz)
-    for zi = 1:nz
-        for ki = 1:nk
-            kval = kgrid[ki]
-            zval = exp(zgrid[zi])
-            kval_adj = max((1.0 - delta)*kval, kgrid[1])
-
-            vnext = splint(kgrid, Vprime[:, zi], V2prime[:, zi], nk, kval_adj)
-            v1_adj[ki, zi] = vnext
-        end
-    end
-
-    ev1 = v1_adj * zP'
 
     for ki = 1:nk
         for zi = 1:nz
 
             kval = kgrid[ki]
             zval = exp(zgrid[zi])
+            # k declines next period if we dont adjust
+            kval_adj = max((1.0 - delta)*kval, kgrid[1])
 
             # optimal is a static problem
-
             val = P * freduced(zval, kval, agg, params)
-            val += beta * sdf * ev1[ki, zi]
+
+            Ex = 0.0
+            for z1i = 1:nz
+                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
+                Ex += zP[zi, z1i] * vnext_fun(kval_adj)
+           end
+
+            val += beta * Ex
 
             V[ki, zi] = val
         end
@@ -274,8 +280,8 @@ end
 Value function iteration=
 ==#
 function viter(agg, params; 
-    tol=1e-6, maxiter=1000, howarditer=10,
-    printinterval=100, printinfo=true
+    tol=1e-6, maxiter=1000, howarditer=50,
+    printinterval=100, printinfo=true, learningrate=1.0
     )
 
     @unpack nk, nz, kmin, kgrid = params
@@ -298,10 +304,11 @@ function viter(agg, params;
             T_adjust_given!(Vadjust1, kpol, Vold, V2old, params, agg)
             T_noadjust!(Vnoadjust1, Vold, V2old, params, agg)
             V1, xibar_mat = getVout(Vadjust1, Vnoadjust1, params)
-            Vold[:] = V1
+            Vold = learningrate * V1 + (1.0 - learningrate) * Vold
+
             # respline it up
             for zi = 1:nz
-                spline!(kgrid, Vold[:, zi], nk, 1.0e30, 1.0e30, V2old[:, zi])
+                V2old[:, zi] = spline(kgrid, Vold[:, zi], nk, 1.0e30, 1.0e30)
             end
         end
 
@@ -311,14 +318,15 @@ function viter(agg, params;
         # now adjust policy
         T_adjust_max!(Vadjust1, kpol, Vold, V2old, params, agg)
         T_noadjust!(Vnoadjust1, Vold, V2old, params, agg)
+        V1, xibar_mat = getVout(Vadjust1, Vnoadjust1, params)
 
-        erroradjust = maximum(abs.(Vadjust1 - Vadjust0))
-        errornoadjust = maximum(abs.(Vnoadjust1 - Vnoadjust0))
-        error = max.(erroradjust, errornoadjust)
+        error = maximum(abs.(V1 - Vold))
         iter += 1
+        Vold = V1
 
         if (iter == 1 || mod(iter, printinterval) == 0) && printinfo
             println("Iterations: $iter, Error: $error")
+            @show kpol
         end
 
     end

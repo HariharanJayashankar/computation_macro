@@ -1,7 +1,8 @@
 # spline function from terry :)
-function spline!(x,y,n,yp1,ypn,y2)
+function spline(x,y,n,yp1,ypn)
     
     u = zeros(n)
+    y2 = zeros(n)
     if (yp1 > 0.99e30)
         y2[1] = 0.0
         u[1] = 0.0
@@ -30,6 +31,8 @@ function spline!(x,y,n,yp1,ypn,y2)
     for k=n-1:-1:1
         y2[k]=y2[k]*y2[k+1]+u[k]
     end
+
+    return y2
 
 end
 
