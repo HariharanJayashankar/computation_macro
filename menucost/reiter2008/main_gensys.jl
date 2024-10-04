@@ -26,7 +26,7 @@ params = @with_kw (
     m =  3, # tauchen grid distance
     na = 10, #number of grids in shock
     np = 200, # number of price grids
-    np_fine = 200, # number of price grids on histogram
+    np_fine = np, # number of price grids on histogram
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
     shock = tauchen(na, ρ, σ, 0.0, m),
@@ -40,8 +40,8 @@ params = @with_kw (
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
     pss = log.(pflex),
-    plo = 0.5*pflex,
-    phi = 2.2*pflex,
+    plo = 0.8*pflex,
+    phi = 1.4*pflex,
     pgrid = range(plo, phi, length=np),
     pgrid_fine = range(plo, phi, length=np_fine),
     ρ_agg = 0.9
@@ -59,13 +59,56 @@ heatmap(p.agrid, p.pgrid_fine,omega)
 plot(p.pgrid_fine, pdist)
 Vout = max.(repeat(Vadjust', p.np, 1), Vnoadjust)
 
-pollamb_mat = zeros(p.np_fine, p.na)
+heatmap(pollamb)
+
+# testing if inflation changes work
+# increase r => euler reduces C => labour supply increases and w decreases => w to firm decreases
+V_l_check, Vadj_l_check, Vnoadj_l_check, polp_l_check, pollamb_l_check, _, _ = vBackwardFirm(
+    (Y=Y-0.1, w=w-0.1), p, 1.0, Vout, 0.0, stochdiscfactor = 1.0
+)
+omega1, omega0hat = Tfunc_general(omega, polp_l_check, pollamb_l_check, p, p.np_fine, 0.0, 1.0)
+
+# get implied aggregate price
+aggprice = 0.0
+aggprice_l = 0.0
 for pidx=1:p.np_fine
-    for aidx=1:p.na
-        pollamb_mat[pidx, aidx] = pollamb(p.pgrid_fine[pidx], p.agrid[aidx])
+    for aidx = 1:p.na
+        pval = p.pgrid[pidx]
+        aggprice += pval^(1.0 - p.ϵ) * omega1[pidx, aidx]
+        aggprice_l += pval^(1.0 - p.ϵ) * omega[pidx, aidx]
     end
 end
-heatmap(pollamb_mat)
+aggprice_l = aggprice_l^(1.0/(1.0-p.ϵ))
+aggprice = aggprice^(1.0/(1.0-p.ϵ))
+aggprice/aggprice_l # deflation which is right
+# inputting some deflation here would ikncrease the agg real price
+
+
+# testing if inflation changes wor
+V_l_check, Vadj_l_check, Vnoadj_l_check, polp_l_check, pollamb_l_check, _, _ = vBackwardFirm(
+    (Y=Y, w=w), p, 1.0, Vout, 0.30, stochdiscfactor = 1.0
+)
+omega1, omega0hat = Tfunc_general(omega, polp_l_check, pollamb_l_check, p, p.np_fine, 0.30, 1.0)
+
+
+# get implied aggregate price
+aggprice = 0.0
+aggprice_l = 0.0
+for pidx=1:p.np_fine
+    for aidx = 1:p.na
+        pval = p.pgrid[pidx]
+        aggprice += pval^(1.0 - p.ϵ) * omega1[pidx, aidx]
+        aggprice_l += pval^(1.0 - p.ϵ) * omega[pidx, aidx]
+    end
+end
+aggprice_l = aggprice_l^(1.0/(1.0-p.ϵ))
+aggprice = aggprice^(1.0/(1.0-p.ϵ))
+aggprice/aggprice_l # deflation which is right
+
+pdist0 = sum(omega, dims=2)
+pdist1 = sum(omega1, dims=2)
+plot(p.pgrid, pdist0)
+plot!(p.pgrid, pdist1)
 
 # testing reiter resid
 sizedist = p.na * p.np_fine

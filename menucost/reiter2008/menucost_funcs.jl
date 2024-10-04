@@ -350,7 +350,7 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
             pval0 = params.pgrid[pidx]
             pval = pval0 / (1.0 + infl)
             aval = log(Z) + params.agrid[aidx]
-            if pval0 > params.plo && pval0 < params.phi
+            if pval > params.plo && pval < params.phi
                 pidx_vals = searchsorted(params.pgrid, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
