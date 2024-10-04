@@ -492,7 +492,38 @@ function updateDist(omega0, kpol_dense, xipol_dense, params)
         end
     end
 
+    omega1 = omega1 ./ sum(omega1)
+
     return omega1
+end
+
+function ssDist(kpoldense, xipoldense, params; 
+    tol=1e-6, maxiter=1000, printinfo=false, printinterval=50)
+
+    @unpack nk, nz, kmin, kgrid, nkdense, 
+    kgrid_dense, xibar, kmin, kmax, zP, delta = params
+
+    error = one(tol) + tol
+    iter = 0
+    omega0 = ones(params.nkdense, params.nz)
+    omega0 = omega0 ./ sum(omega0)
+
+    while (iter < maxiter) && (error > tol)
+
+        omega1 = updateDist(omega0, kpoldense, xipoldense, params)
+        error = maximum(abs.(omega1 - omega0))
+        omega0 = omega1
+        iter += 1
+
+        if printinfo && (mod(iter, printinterval) == 0)
+            println("SS Dist Iterations $iter, error: $error")
+        end
+
+    end
+
+    return omega0
+
+
 end
 
 
@@ -500,8 +531,17 @@ end
 Residual of steady state
 Gives optimal p (which is what we actually solve for)
 ==#
-function ss_equil_resid(params; tol=1e-4, maxiter=100, learningrate=0.1)
+function ss_equil_resid(p, params; tol=1e-4, maxiter=100, learningrate=0.1)
+    
 
+    @unpack nk, nz, kmin, kgrid, nkdense, 
+        kgrid_dense, xibar, kmin, kmax, zP, delta, phi = params
+
+    winit = phi/p
+    agg = (A=1.0, W=winit, P=pinit)
+
+    Vadjust, Vnoadjust, Vout, kpol, xibar_mat, error, iter = viter(agg, params)
+    kpoldense, xipoldense = makedense(kpol, Vout, params, agg)
 
     return 0
 
