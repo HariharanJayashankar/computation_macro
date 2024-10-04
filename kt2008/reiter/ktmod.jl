@@ -413,14 +413,86 @@ given policy function and previous period distribution
 
 Using Young 2010 stochastic simulation update
 ==#
-function updateDist(omega0, kpol, xibar, params)
+function updateDist(omega0, kpol_dense, xipol_dense, params)
 
-    @unpack nk, nz, kmin, kgrid, nkdense = params
+    @unpack nk, nz, kmin, kgrid, nkdense, 
+    kgrid_dense, xibar, kmin, kmax, zP, delta = params
+
     omega1 = zeros(nkdense, nz)
+    for zi = 1:nz
 
+        kstar = kpol_dense[1, zi]
 
+        for ki =1:nkdense
+            xival = xipol_dense[ki, zi]
+            probadjust = cdfxi(xival, xibar)
 
-    return 
+            # adjusters weights
+            if kstar > kmin && kstar < kmax
+                kidxvals = searchsorted(kgrid_dense, kstar)
+                kidx_lo = last(kidxvals)
+                kidx_hi = kidx_lo + 1
+                total_dist = kgrid_dense[kidx_hi] - kgrid_dense[kidx_lo]
+
+                wt_lo = 1.0 - (kstar - kgrid_dense[kidx_lo])/total_dist
+                wt_lo = min(1.0, max(0.0, wt_lo))
+                wt_hi = 1.0 - wt_lo
+                
+
+            elseif kstar <= kmin
+                kidx_lo = 1
+                kidx_hi = 2
+                wt_lo = 1.0
+                wt_hi = 0.0
+
+            elseif kstar >= kmax
+                kidx_hi = nkdense
+                kidx_lo = idx_hi - 1
+                wt_lo = 0.0
+                wt_hi = 1.0
+            end
+
+            for z1i = 1:nz
+                omega1[kidx_lo, z1i] += probadjust * zP[zi, z1i] * wt_lo * omega0[ki, zi]
+                omega1[kidx_hi, z1i] += probadjust * zP[zi, z1i] * wt_hi * omega0[ki, zi]
+            end
+
+            # non adjusters
+            kval = kgrid_dense[ki]
+            kval_adj = max((1.0 - delta)*kval, kmin)
+            if kval_adj > kmin && kval_adj < kmax
+                kidxvals = searchsorted(kgrid_dense, kval_adj)
+                kidx_lo = last(kidxvals)
+                kidx_hi = kidx_lo + 1
+                total_dist = kgrid_dense[kidx_hi] - kgrid_dense[kidx_lo]
+
+                wt_lo = 1.0 - (kval_adj - kgrid_dense[kidx_lo])/total_dist
+                wt_lo = min(1.0, max(0.0, wt_lo))
+                wt_hi = 1.0 - wt_lo
+                
+
+            elseif kval_adj <= kmin
+                kidx_lo = 1
+                kidx_hi = 2
+                wt_lo = 1.0
+                wt_hi = 0.0
+
+            elseif kval_adj >= kmax
+                kidx_hi = nkdense
+                kidx_lo = idx_hi - 1
+                wt_lo = 0.0
+                wt_hi = 1.0
+            end
+
+            for z1i = 1:nz
+                omega1[kidx_lo, z1i] += (1.0-probadjust) * zP[zi, z1i] * wt_lo * omega0[ki, zi]
+                omega1[kidx_hi, z1i] += (1.0-probadjust) * zP[zi, z1i] * wt_hi * omega0[ki, zi]
+            end
+
+        end
+    end
+
+    return omega1
 end
 
 
