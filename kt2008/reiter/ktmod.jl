@@ -1,10 +1,12 @@
 using QuantEcon, LinearAlgebra, Roots, Parameters
-using Interpolations
+# using Interpolations
 using ForwardDiff
 using FiniteDifferences
 using FiniteDiff
 using SparseArrays, SparsityDetection
 using Optim
+using BSplineKit
+
 #==
 Get steady state level of capital from neoclassical model
 used to calculate grid space
@@ -28,9 +30,9 @@ paramgen = @with_kw (
     rho_z = 0.859,
     xibar = 0.0083,
     kmin = 0.2 * kss(beta, alpha, delta),
-    kmax = 1.5 * kss(beta, alpha, delta),
+    kmax = 3.0 * kss(beta, alpha, delta),
     nk = 20,
-    kgrid = range(kmin, kmax, nk),
+    kgrid = exp.(range(log(kmin), log(kmax), nk)),
     m =  3, # tauchen grid distance
     nz = 10, #number of grids in shock,
     shock = tauchen(nz, rho_z, sigma_z, 0.0, m),
@@ -73,6 +75,9 @@ function fprod(z,k,n,agg,params)
 
 end
 
+#==
+Production function optimized for labour (and its cost)
+==#
 function freduced(z,k,agg,params)
 
     @unpack alpha, eta = params
@@ -82,7 +87,7 @@ function freduced(z,k,agg,params)
     exponenteta = 1.0 / (1.0 - eta)
 
     fout = ( eta ^ (eta * exponenteta) ) * (1.0 - eta) * ( W ^ ( -1.0 * eta * exponenteta ) )
-    fout = fout * (z ^ exponenteta) * (A ^ exponenteta) * ( k ^ (alpha * exponenteta) )
+    fout = fout * (z ^ exponenteta) * (A ^ exponenteta) * ( k .^ (alpha * exponenteta) )
     return fout
 
 
@@ -108,34 +113,43 @@ function T_adjust!(V, kpol, Vprime, params, agg; sdf=1.0)
 
     # ev1 = Vprime * zP'
 
-    for ki = 1:nk
-        for zi = 1:nz
+    for zi = 1:nz
+
+        zval = exp(zgrid[zi])
+        # using brent to optimize
+        # needs Vprime to be an interpolated value function
+        # independent of zval
+
+        function objective(k1)
+            out = -P * k1  # only term relevant for k
+
+            Ex = 0.0
+            for z1i = 1:nz
+                Vinterp = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(2))
+                Vinterp = extrapolate(Vinterp, Smooth())
+                Ex += zP[zi, z1i] * Vinterp(k1)
+            end
+
+            out += beta * sdf * Ex
+
+            # maximimze
+            out = -1.0 * out
+
+            return out
+        end
+
+        result = optimize(objective, kmin, kmax, Brent())
+        @show zval
+        @show kstar = Optim.minimizer(result)
+        maxtillnow = -1.0 * Optim.minimum(result)
+
+        for ki = 1:nk
 
             kval = kgrid[ki]
-            zval = exp(zgrid[zi])
 
-            # using brent to optimize
-            # needs Vprime to be an interpolated value function
-            function objective(k1)
-                out = P * (freduced(zval, kval, agg, params) - k1 + (1.0 - delta)*kval)
-
-                Ex = 0.0
-                for z1i = 1:nz
-                    z1val = exp(zgrid[z1i])
-                    Ex += zP[zi, z1i] * Vprime(k1, z1val)
-                end
-                out += beta * sdf * Ex
-
-                # maximimze
-                out = -1.0 * out
-
-                return out
-            end
-            result = optimize(objective, kmin, kmax, Brent())
-            kstar = Optim.minimizer(result)
-            maxtillnow = Optim.minimum(result)
+            # maxtillnow = -maxtillnow # revert this
+            @show maxtillnow += P*(freduced(zval, kval, agg, params) + (1.0 - delta)*kval)
             
-
             # # max over k
             # maxtillnow = -100000.0
             # kstar = 0
@@ -178,13 +192,15 @@ function T_noadjust!(V, Vprime, params, agg; sdf=1.0)
 
     # k declines next period if we dont adjust
     v1_adj = zeros(eltype(Vprime), nk, nz)
-    for ki = 1:nk
-        for zi = 1:nz
+    for zi = 1:nz
+        Vinterp = interpolate(kgrid, Vprime[:, zi], BSplineOrder(2))
+        Vinterp = extrapolate(Vinterp, Smooth())
+        for ki = 1:nk
             kval = kgrid[ki]
             zval = exp(zgrid[zi])
             kval_adj = max((1.0 - delta)*kval, kgrid[1])
 
-            v1_adj[ki, zi] = Vprime(kval_adj, zval)
+            v1_adj[ki, zi] = Vinterp(kval_adj)
         end
     end
 
@@ -230,12 +246,8 @@ function getVout(Vadjust, Vnoadjust, params)
         end
     end
 
-    #interpolate
-    itp = interpolate(Vout, (BSpline(Cubic()), BSpline(Cubic())))
-    eitp = extrapolate(itp, Line())
-    Voutinterp = Interpolations.scale(eitp, kgrid, zgrid)
 
-    return Voutinterp, xibar_mat
+    return Vout, xibar_mat
 
 end
 
