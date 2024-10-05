@@ -4,6 +4,7 @@ using ForwardDiff
 using FiniteDifferences
 using FiniteDiff
 using SparseArrays, SparsityDetection
+using Optim
 
 # find stationary distribution
 # of markov process characterized by
@@ -138,10 +139,21 @@ function  viterFirm(agg, params;
     pollamb = vadjust .> vnoadjust
     vout = max.(vadjust, vnoadjust)
 
+    # adjusting policies are jsut one dimensional
     polp = getindex.(pstar, 1)
-    polp = repeat(polp, np, 1)
+    polp = polp[:]
+    vadjust = vadjust[1, :]
 
-    return vout, vadjust, vnoadjust, polp, pollamb, iter, error
+    # interpolate the policies
+    itp = interpolate(p.pgrid[polp], (BSpline(Cubic())))
+    eitp = extrapolate(itp, Line())
+    polp_interp = Interpolations.scale(eitp, p.agrid)
+
+    itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
+    eitp = extrapolate(itp, Line())
+    pollamb_interp = Interpolations.scale(eitp, p.pgrid, p.agrid)
+
+    return vout, vadjust, vnoadjust, polp_interp, pollamb_interp, iter, error
 
 end
 
@@ -149,7 +161,7 @@ end
 Backward induction of V - for when we know tomorrow's value function 
 infl = log(P_t/P_{t-1})
 ==#
-function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f; 
+function  vBackwardFirm(agg, params, Z, v1, infl;
                         stochdiscfactor = 1.0,
                         maxiter=10000, tol=1e-6, 
                         printinterval=1000, printinfo=true) 
@@ -164,8 +176,10 @@ function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f;
     for pidx=1:np
         for aidx=1:na
             pval = params.pgrid[pidx];
+            pval_adj = pval / (1.0 + infl)
             aval =  log(Z) + params.agrid[aidx];
             profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
+            profit_infl_mat[pidx, aidx] = (pval_adj^(1-ϵ) - pval_adj^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
         end
     end
 
@@ -173,37 +187,40 @@ function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f;
     iter = 0;
 
     # interpolate v1
-    itp = interpolate(v1, (BSpline(Linear()), BSpline(Linear())))
+    itp = interpolate(v1, (BSpline(Cubic()), BSpline(Cubic())))
     eitp = extrapolate(itp, Line())
     v1interp = Interpolations.scale(eitp, pgrid, agrid)
     v1_infl = zeros(eltype(v1), np, na)
-    v1_noadj = zeros(eltype(v1), np, na)
+    v1_noinfl = zeros(eltype(v1), np, na)
     for pidx = 1:np
         for aidx = 1:na
             pval = pgrid[pidx]
-            pval_adj = pval / exp(infl_f)
+            pval_adj = pval / (1.0 + infl)
 
-            aval = log(Z_f) + agrid[aidx]
+            aval = agrid[aidx]
             v1_infl[pidx, aidx] = v1interp(pval_adj, aval)
+            v1_noinfl[pidx, aidx] = v1interp(pval, aval)
         end
     end
 
     ev1_infl = v1_infl * aP';
+    ev1_noinfl = v1_noinfl * aP';
 
     # iterate over choices
-    vnoadjust = profit_mat + β * stochdiscfactor * ev1_infl
-    vadjust_val = profit_mat .- κ +  β * stochdiscfactor * ev1_infl
+    vnoadjust = profit_infl_mat + β * stochdiscfactor * ev1_infl
+    vadjust_val = profit_mat .- κ +  β * stochdiscfactor * ev1_noinfl
     vadjustmax, pstar = findmax(vadjust_val, dims=1)
-
     vadjust = repeat(vadjustmax, np, 1)
 
     pollamb = vadjust .> vnoadjust
     vout = max.(vadjust, vnoadjust)
 
     polp = getindex.(pstar, 1)
-    polp = repeat(polp, np, 1)
+    polp = polp[:]
+    vadjust = vadjust[1, :]
 
-    return vout, vadjust, vnoadjust, polp, pollamb, iter, error
+    # interpolate the policies
+    return vout, vadjust, vnoadjust, p.pgrid[polp], pollamb, iter, error
 
 end
 
@@ -231,7 +248,7 @@ function Tfunc(omega0, polp, pollamb, params)
     for pidx = 1:params.np
         for aidx = 1:params.na
             
-            p1idx = polp[pidx, aidx];
+            p1idx = polp[aidx];
 
             # non adjusters
             omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
@@ -250,22 +267,13 @@ function Tfunc(omega0, polp, pollamb, params)
 end
 
 #==
-Tfunc general is meant to be a typical Young 2010 non stochastic simulation
-function.
-- omega0 is a 2d matrix of distribvution over (p,a) in the previous period
-- omega0hat is 2d matrix of distribution over (p,a) at beginin of period
-after shocks have been realized but before pricing decisions have been made
-- polp is the policy function conditional oin adjustment - crucially in this
-function it returns the actual price value instead of the price index in the
-pricegrid
-- pollamb is {1,0} for whether a firm adjusts or not
+yougn simulation of updating exogenous shock process
 ==#
-function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
-    
+function Tfunc_updateshocks(omega0, params, ngrid, Z)
+
     aP = params.aP
 
-    # update shock dist
-    omega1hat = zeros(params.np, params.na);
+    omega1hat = zeros(ngrid, params.na);
     agrid = log(Z) .+ params.agrid
     for pidx = 1:ngrid
         for aidx = 1:params.na
@@ -280,7 +288,7 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
 
                 wt_lo = 1.0 - (aval - params.agrid[aidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
-                wt_hi = 1 - wt_lo
+                wt_hi = 1.0 - wt_lo
 
                 for a0idx = 1:params.na
                     omega1hat[pidx, aidx_hi] = omega1hat[pidx, aidx_hi] + wt_hi * omega0[pidx, a0idx] * aP[a0idx, aidx_hi]
@@ -305,42 +313,44 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
         end
     end
 
+    return omega1hat
+
+end
+
+#==
+Tfunc general is meant to be a typical Young 2010 non stochastic simulation
+function.
+- omega0 is a 2d matrix of distribvution over (p,a) in the previous period
+- omega0hat is 2d matrix of distribution over (p,a) at beginin of period
+after shocks have been realized but before pricing decisions have been made
+- polp is the policy function conditional oin adjustment - crucially in this
+function it returns the actual price value instead of the price index in the
+pricegrid
+- pollamb is {1,0} for whether a firm adjusts or not
+
+If inflation is non zero you can apss in the discretized policy funciton matrices
+which spit out the index of the pgrid
+
+If inflation is non zero use should pass in the interpolated policy functions
+which take in the actual pvalues and spit out the pvalues aswell
+==#
+function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
+    
+
+    omega1hat = Tfunc_updateshocks(omega0, params, params.np, Z)
+
     # update policies
     omega1 = zeros(ngrid, params.na);
-    for pidx = 1:ngrid
+    
+
+    for pidx = 1:params.np
         for aidx = 1:params.na
 
             # non adjusters
             pval0 = params.pgrid[pidx]
-            pval0 = pval0 / exp(infl)
-            if pval0 > params.pgrid[1] && pval0 < params.pgrid[end]
-                pidx_vals = searchsorted(params.pgrid, pval0)
-                pidx_lo = last(pidx_vals)
-                pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
-
-                wt_lo = 1.0 - (pval0 - params.pgrid[pidx_lo])/total_dist
-                wt_lo = min(1.0, max(0.0, wt_lo))
-                wt_hi = 1 - wt_lo
-
-                omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-                omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-                
-
-            elseif pval0 <= params.pgrid[1]
-
-                omega1[1, aidx] = omega1[1, aidx] +  (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-
-            elseif pval0 >= params.pgrid[end]
-
-                omega1[end, aidx] = omega1[end, aidx] +  (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-
-            end
-
-            # adjusters
-            pval = params.pgrid[polp[pidx, aidx]];
-            pval = pval / exp(infl);
-            if pval > params.pgrid[1] && pval < params.pgrid[end]
+            pval = pval0 / (1.0 + infl)
+            aval = log(Z) + params.agrid[aidx]
+            if pval > params.plo && pval < params.phi
                 pidx_vals = searchsorted(params.pgrid, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
@@ -349,15 +359,42 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
                 wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1 - wt_lo
+
+                omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                
+
+            elseif pval <= params.plo
+
+                omega1[1, aidx] = omega1[1, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+
+            elseif pval >= params.phi
+
+                omega1[end, aidx] = omega1[end, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+
+            end
+
+            # adjusters
+            pval0 = params.pgrid[pidx]
+            pval = polp[aidx]
+            if pval > params.plo && pval < params.phi
+                pidx_vals = searchsorted(params.pgrid, pval)
+                pidx_lo = last(pidx_vals)
+                pidx_hi = pidx_lo + 1
+                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
+
+                wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
+                wt_lo = min(1.0, max(0.0, wt_lo))
+                wt_hi = 1.0 - wt_lo
                 
                 omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
                 omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval <= params.pgrid[1]
+            elseif pval <= params.plo
 
                 omega1[1, aidx] = omega1[1, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval >= params.pgrid[end]
+            elseif pval >= params.phi
 
                 omega1[end, aidx] = omega1[end, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
@@ -365,18 +402,19 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
         end
     end
 
-    omega1 = omega1 ./ sum(omega1)
-    omega1hat = omega1hat ./ sum(omega1hat)
+    # omega1 = omega1 ./ sum(omega1)
+    # omega1hat = omega1hat ./ sum(omega1hat)
     return omega1, omega1hat
 
 end
 
+
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
 
-    omega1 = ones(params.np, params.na);
-    omega1 = omega1 ./ (params.np*params.na);
-    omega1hat = zeros(params.np, params.na);
+    omega1 = ones(params.np_fine, params.na);
+    omega1 = omega1 ./ (params.np_fine*params.na);
+    omega1hat = zeros(params.np_fine, params.na);
     # omega1 = sparse(omega1)
     # omega1hat = sparse(omega1hat)
     error = 10;
@@ -385,7 +423,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     while (error > tol) && (iter < maxiter)
 
         omega0 = omega1
-        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np, params.Π_star, 1.0)
+        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np_fine, params.Π_star, 1.0)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
         omega0hat = omega1hat;
@@ -418,9 +456,9 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.1,
     error = 10
 
     # preallocating
-    Vadjust = zeros(p.np, p.na)
+    Vadjust = zeros(p.na)
     Vnoadjust = zeros(p.np, p.na)
-    polp = zeros(p.np, p.na)
+    polp = zeros(p.na)
     pollamb = zeros(p.np, p.na)
     omega = zeros(p.np, p.na)
     omegahat = zeros(p.np, p.na)
@@ -434,10 +472,18 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.1,
 
         # get joint distribution of prices and shocks
         omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
-        pdist = sum(omega, dims=2)
 
-        # get implied aggregate Y
-        Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
+        # get implied aggregate price
+        aggprice = 0.0
+        for pidx=1:p.np
+            for aidx = 1:p.na
+                pval = p.pgrid[pidx]
+                pchange = pollamb[pidx, aidx]
+                p1val = pchange * p.pgrid[polp[aidx]]  + (1.0 - pchange) * pval
+                aggprice += p1val^(1.0 - p.ϵ) * omegahat[pidx, aidx]
+            end
+        end
+        aggprice = aggprice^(1.0/(1.0-p.ϵ))
 
         # get profits to give HH
         # get aggregate fixed cost payments
@@ -448,21 +494,27 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.1,
         for pidx = 1:p.np
             for aidx = 1:p.na
                 pval = p.pgrid[pidx]
-                aval = p.agrid[aidx]
-                F += p.κ * pollamb[pidx, aidx] .* omegahat[pidx, aidx] # who adjusts in a period
-                Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * omega[pidx,aidx]
+                a1val = p.agrid[aidx]
+                pchange = pollamb[pidx, aidx]
+                p1val = pchange * p.pgrid[polp[aidx]] + (1.0 - pchange)*pval
+                F += p.κ * pchange * omegahat[pidx, aidx]
+                Ld += p1val^(-p.ϵ) * exp(-a1val) * Y0 * omegahat[pidx,aidx]
             end
         end
 
-        C = Yimplied - F
+        C = Y0 - F
         w_implied = p.ζ * Ld^(1/p.ν) * C
 
         # updating guesses
-        errorY = abs(Yimplied - Y0)
+        errorY = abs(aggprice - 1.0)
         errorw = abs(w0 - w_implied)
         error = max(errorY, errorw)
-        # error = errorY
 
+        if aggprice > 1.0
+            Y1 = Y0 * (1.0 - deltaY)
+        else
+            Y1 = Y0 * (1.0 + deltaY)
+        end
         Y1 = (1-deltaY) * Y0 + deltaY * Yimplied;
         w1 = (1-deltaw) * w0 + deltaw * w_implied;
         Y0 = Y1
@@ -480,6 +532,59 @@ function findEquilibrium_ss(p; winit=1, tol=1e-4, max_iter=200, deltaw=0.1,
 
     return w0, Y0, Vadjust, Vnoadjust, polp, pollamb,  omega, omegahat, C, iter, error
 end
+
+#==
+x = [w , y]
+==#
+function equilibriumResidual(x, p)
+
+    w = x[1]
+    Y = x[2]
+    agg = (w=w, Y=Y);
+    V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
+
+    # get joint distribution of prices and shocks
+    omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
+
+    # get implied aggregate price
+    aggprice = 0.0
+    for pidx=1:p.np_fine
+        for aidx = 1:p.na
+            pval = p.pgrid[pidx]
+            aggprice += pval^(1.0 - p.ϵ) * omega[pidx, aidx]
+        end
+    end
+    aggprice = aggprice^(1.0/(1.0-p.ϵ))
+
+    # get profits to give HH
+    # get aggregate fixed cost payments
+    # get labour demand
+    # integrate
+    Ld = 0.0
+    F = 0.0
+    for pidx = 1:p.np_fine
+        for aidx = 1:p.na
+            pval = p.pgrid[pidx]
+            a1val = p.agrid[aidx]
+            pchange = pollamb[pidx, aidx]
+            F += p.κ * pchange * omegahat[pidx, aidx]
+            Ld += pval^(-p.ϵ) * exp(-a1val) * Y * omega[pidx,aidx]
+        end
+    end
+
+    C = Y - F
+    w_implied = p.ζ * Ld^(1/p.ν) * C
+
+    # sum of squared errors
+    errorY = (aggprice - 1.0)^2.0
+    errorw = (w - w_implied)^2.0
+    error = errorY + errorw
+    return error, w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C
+
+end
+
+
+
 
 # Solving using Reiter 2009
 
@@ -512,35 +617,40 @@ function residequations(Xl, X,
                 p, yss )
     
     # default params
-    @unpack np, na = p
+    @unpack np, na, np_fine = p
 
-    sizedist = np * na
+    sizedist = np_fine * na
+    sizev = np * na
 
     # unpacking
-    omega_l = reshape(Xl[1:sizedist], np, na)
-    omega = reshape(X[1:sizedist], np, na)
+    omega_l = reshape(Xl[1:sizedist], np_fine, na)
+    omega = reshape(X[1:sizedist], np_fine, na)
 
-    V_l = reshape(Xl[(sizedist+1):(2*sizedist)], np, na)
-    V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
+    Vl = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
+    V = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
 
-    wl, rl, Yl, Cl, Zl  = Xl[(2*sizedist+1):(end-1)]
-    w, r, Y, C, Z = X[(2*sizedist+1):(end-1)]
+    wl, rl, Yl, Cl, Zl  = Xl[(sizedist+sizev+1):(end-1)]
+    w, r, Y, C, Z = X[(sizedist+sizev+1):(end-1)]
     infl_l = Xl[end]
     infl = X[end]
 
     # expectation errors
-    ηv = reshape(η[1:sizedist], np, na)
-    η_ee = η[end]
+    ηv = reshape(η[1:sizev], np, na)
+    # η_polp = η[(na+1):2*na]
+    # ηv_noadj = reshape(η[(2*na+1):(2*na + sizev)], np, na)
+    # ηv_noadj = reshape(η[(na+1):(na + sizedist)], np, na)
+    η_ee = η[sizev + 1]
 
-    stochdiscfactor = (Cl*exp(infl))/C 
 
     #==
     Compute Value functions given optimal adjusting price rule
     ==#
+    stochdiscfactor = Cl/C
     # calculate implied polp
-    V_l_check, Vadj_l, Vnoadj_l, polp_l_check, pollamb_l, _, _ = vBackwardFirm(
-        (Y=Yl, w=wl), p, Zl, Z, V, infl_l, infl, stochdiscfactor = stochdiscfactor
+    V_l_check, Vadj_l_check, Vnoadj_l_check, polp_l_check, pollamb_l_check, _, _ = vBackwardFirm(
+        (Y=Y, w=w), p, Z, V, infl, stochdiscfactor = stochdiscfactor
     )
+
     V_l_check += ηv
 
     #==
@@ -548,11 +658,18 @@ function residequations(Xl, X,
     ==#
     # this gives distribution at the start for period t before period t shocks
     # have been realized
-    omega1, omega1hat = Tfunc_general(omega_l, polp_l_check, pollamb_l, p, p.np, infl, Zl)
-    pdist = sum(omega1, dims=2)
+    omega1, omega0hat = Tfunc_general(omega_l, polp_l_check, pollamb_l_check, p, p.np_fine, infl, Z)
+    # omega1hat = Tfunc_updateshocks(omega1, p, p.np_fine, Z)
 
-    # get implied aggregate Y
-    Yimplied = (p.pgrid  .^ (-p.ϵ)) ⋅ pdist
+    # get implied aggregate price
+    aggprice = 0.0
+    for pidx=1:p.np_fine
+        for aidx = 1:p.na
+            pval = p.pgrid[pidx]
+            aggprice += pval^(1.0 - p.ϵ) * omega[pidx, aidx]
+        end
+    end
+    aggprice = aggprice^(1.0/(1.0-p.ϵ))
 
     # get profits to give HH
     # get aggregate fixed cost payments
@@ -560,12 +677,14 @@ function residequations(Xl, X,
     # integrate
     Ld = 0.0
     F = 0.0
-    for pidx = 1:p.np
+    for pidx = 1:p.np_fine
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
             aval = p.agrid[aidx]
-            F += p.κ * pollamb_l[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
-            Ld += pval^(-p.ϵ) * exp(-aval) * Yimplied * omega1[pidx,aidx]
+            pchange = pollamb_l_check[pidx, aidx]
+
+            F += p.κ * pchange * omega0hat[pidx, aidx]
+            Ld += pval^(-p.ϵ) * exp(-aval) * Y * omega1[pidx,aidx]
         end
     end
 
@@ -574,135 +693,25 @@ function residequations(Xl, X,
     r_val = rl +  p.ϕ_infl*(infl - p.Π_star) + p.ϕ_output*(Y-yss) + ϵ[2]
     mon_pol_error = r_val - r
 
-    cerror = C - Yimplied + F
+    cerror = C - Y + F
     w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/Cl) - (1+rl)*p.β*1/(exp(infl)*C) - η_ee
+    euler_error  = 1.0/Cl - (1+rl)*p.β/(C*(1.0+infl)) - η_ee
     zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
 
 
     # == residual vector == #
     residvector = zero(X)
     residvector[1:sizedist] = vec(omega1 - omega)
-    residvector[(sizedist+1):(2*sizedist)] = vec(V_l_check - V_l)
+    residvector[(sizedist+1):(sizedist+sizev)] = vec(V_l_check - Vl)
 
 
     # other error
-    residvector[(2*sizedist+1):end] = [w-w_implied,Y-Yimplied,
+    residvector[(sizedist+sizev+1):end] = [w-w_implied,1.0 - aggprice,
                                         euler_error,cerror,
                                         mon_pol_error,
                                         zerror]
 
      
-    return residvector
-    
-end
-
-#==
-Residual equations which equal 0 at equilibrium
-Made for linear time iterations
-Xl is lagged value of variables
-X is current value of variables
-Xf is future (expected) value of variables
-The variables are:
-- each bin of (p,a) to track distribution - stacked as a vector, size np * na
-- w
-- r
-- Y
-- C
-- Z (aggregate shock)
-- Ey
-- Ew
-- EMu(C) - expected marginal utility
-- V - value functions
-
-A lot of it is rewriting the findEquilibrium_ss function
-but without iterating till steady state for the distribution
-Note r and C are added in compared to steady state since
-the euler equation has to hold in equilibrium outside
-SS now
-Last three are needed to solve todays value function
-
-==#
-function residequations_lti(Xl, X, Xf, ϵ, p)
-    
-    # default params
-    @unpack np, na = p
-
-    sizedist = np * na
-
-    # unpacking
-    omega_l = reshape(Xl[1:sizedist], np, na)
-    omega = reshape(X[1:sizedist], np, na)
-    omegaf = reshape(Xf[1:sizedist], np, na)
-
-    V_l = reshape(Xl[(sizedist+1):(2*sizedist)], np, na)
-    V = reshape(X[(sizedist+1):(2*sizedist)], np, na)
-    V_f = reshape(Xf[(sizedist+1):(2*sizedist)], np, na)
-
-    # need to rewrite this opening to accomodate vectors for V, polp, etc
-    wl, rl, Yl, Cl, Zl  = exp.(Xl[(2*sizedist+1):(end-2)])
-    w, r, Y, C, Z = exp.(X[(2*sizedist+1):(end-2)])
-    wf, rf, Yf, Cf, Zf  = exp.(Xf[(2*sizedist+1):(end-2)])
-    Zmonl, infl_l = Xl[(end-1):end]
-    Zmon, infl = X[(end-1):end]
-    Zmonf, infl_f = Xf[(end-1):end]
-
-    stochdiscfactor = C/Cf
-
-    #==
-    Compute Value functions given optimal adjusting price rule
-    ==#
-    # calculate implied polp
-    V_check, Vadj, Vnoadj, polp_check, pollamb, _, _ = vBackwardFirm(
-        (Y=Y, w=w), p, Z, V_f, infl, infl_f, stochdiscfactor = stochdiscfactor
-    )
-
-    #==
-    Compute Distribution checks
-    ==#
-    omega1, omega1hat = Tfunc(omega_l, polp_check, pollamb, p)
-    pdist = sum(omega1, dims=2)
-
-    # get implied aggregate Y
-    Yimplied = sum((p.pgrid .^ (-p.ϵ))' * pdist)
-
-    # get profits to give HH
-    # get aggregate fixed cost payments
-    # get labour demand
-    # integrate
-    Ld = 0
-    F = 0
-    for pidx = 1:p.np
-        for aidx = 1:p.na
-            pval = p.pgrid[pidx]
-            aval = Zl * p.agrid[aidx]
-            F += p.κ * pollamb[pidx, aidx] .* omega1hat[pidx, aidx] # who adjusts in a period
-            Ld += pval^(-p.ϵ) * exp(-aval) * Yl * omega1[pidx,aidx]
-        end
-    end
-
-    # monetary policy
-    mon_pol_error = infl - log(Yl) + log(Y) - Zmon
-    Zmonerror = Zmon - p.ρ_agg * Zmonl - ϵ[2]
-
-    cerror = C - Yimplied - F
-    w_implied = p.ζ * Ld^(1/p.ν) * C
-    euler_error  = (1/C) - (1+rf)*p.β*1/(Cf)
-    zerror = log(Z) - p.ρ_agg * log(Zl) - ϵ[1]
-
-    # == residual vector == #
-    residvector = zero(X)
-    residvector[1:sizedist] = vec(omega1 - omega)
-    residvector[(sizedist+1):(2*sizedist)] = vec(V_check - V)
-
-
-    # other error
-    residvector[(2*sizedist+1):end] = [w-w_implied,Y-Yimplied,
-                                        euler_error,cerror,
-                                        mon_pol_error,
-                                        Zmonerror,
-                                        zerror]
-
     return residvector
     
 end

@@ -1,2 +1,4 @@
 *.jld2
 *.mat
+./winberry/winberryAlgorithmCodes2/*
+./terry_files/*
