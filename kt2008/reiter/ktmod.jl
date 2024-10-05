@@ -649,7 +649,7 @@ function Fsys(Xl, X, η, ϵ, params)
     epaA = ϵ[1]
 
     # store aggregates needed by the firm
-    agg = (P=p, A=Al, W=phi/p)
+    agg = (P=pl, A=Al, W=phi/pl)
 
     # Backwards V iter
     Vadj_l_check = zero(Vadj_l)
@@ -736,10 +736,10 @@ function Fsys(Xl, X, η, ϵ, params)
     residual[2*sizev+1:2*sizev+nz] = vec(kpol_error)
     residual[2*sizev+nz+1:2*sizev+nz+sizedist] = vec(omega_check - omega)
     residual[2*sizev+nz+sizedist+1:end] = [
-        1/p - Cagg,
-        Y - Yagg,
-        I - Iagg,
-        N - Nagg,
+        1/pl - Cagg,
+        Yl - Yagg,
+        Il - Iagg,
+        Nl - Nagg,
         shockerror
     ]
 
