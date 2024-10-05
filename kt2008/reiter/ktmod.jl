@@ -155,7 +155,7 @@ function T_adjust_given!(V, kpol, Vprime, V2prime, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(kstar)
             end
@@ -201,7 +201,7 @@ function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(k1)
             end
@@ -227,7 +227,7 @@ function T_adjust_max!(V, kpol, Vprime, V2prime, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(kstar)
             end
@@ -272,7 +272,7 @@ function T_noadjust!(V, Vprime, V2prime, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, Vprime[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(kval_adj)
            end
@@ -409,7 +409,7 @@ function makedense(kpol, V, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, V[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, V[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(kstar)
             end
@@ -423,7 +423,7 @@ function makedense(kpol, V, params, agg)
 
             Ex = 0.0
             for z1i = 1:nz
-                vnext_fun = interpolate(kgrid, V[:, z1i], BSplineOrder(4))
+                vnext_fun = extrapolate(interpolate(kgrid, V[:, z1i], BSplineOrder(4)), Smooth())
                 # vnext = splint(kgrid, Vprime[:, z1i], V2prime[:, z1i], nk, kstar)
                 Ex += zP[zi, z1i] * vnext_fun(kval_adj)
             end
@@ -648,11 +648,13 @@ function Fsys(Xl, X, η, ϵ, params)
     # shock
     epaA = ϵ[1]
 
+    # store aggregates needed by the firm
+    agg = (P=p, A=Al, W=phi/p)
+
     # Backwards V iter
     Vadj_l_check = zero(Vadj_l)
     Vnoadj_l_check = zero(Vnoadj_l)
     V1, xibar_mat = getVout(Vadj, Vnoadj, params)
-    agg = (P=p, A=Al, W=phi/p)
     T_adjust_given!(Vadj_l_check, kpol_l, V1, V1, params, agg)
     T_noadjust!(Vnoadj_l_check, V1, V1, params, agg)
     Vadj_l_check += η_vadj
@@ -664,7 +666,7 @@ function Fsys(Xl, X, η, ϵ, params)
         Ex = 0.0
         kstar = kpol_l[1, zi]
         for z1i = 1:nz
-            vprimeinter = Derivative(1) * interpolate(kgrid, V1[:, z1i], BSplineOrder(4))
+            vprimeinter = Derivative(1) * extrapolate(interpolate(kgrid, V1[:, z1i], BSplineOrder(4)), Smooth())
             Ex +=  zP[zi, z1i] * vprimeinter(kstar)
         end
         kpol_error[zi] = p - beta*Ex + η_kpol[zi]
@@ -680,9 +682,9 @@ function Fsys(Xl, X, η, ϵ, params)
             kstar = kpol_l[1, zi]
 
             # interpolate lagged value functions
-            valadjust_interp = interpolate(kgrid, Vadj_l[:, zi], BSplineOrder(4))
+            valadjust_interp = extrapolate(interpolate(kgrid, Vadj_l[:, zi], BSplineOrder(4)), Smooth())
             valadjust = valadjust_interp(kval)
-            valnoadjust_interp = interpolate(kgrid, Vnoadj_l[:, zi], BSplineOrder(4))
+            valnoadjust_interp = extrapolate(interpolate(kgrid, Vnoadj_l[:, zi], BSplineOrder(4)), Smooth())
             valnoadjust = valnoadjust_interp(kval)
 
             xival = (valadjust-valnoadjust)/phi  

@@ -10,7 +10,7 @@ include("ktmod.jl")
 include("gensysdt.jl")
 
 # testing firm problem
-params = paramgen(kmin=0.1, kmax=8.0)
+params = paramgen(kmin=0.1, kmax=4.0, nk=10, nkdense=50)
 pinit = 2.3 # a narrrow band of prices only works fori nterior solutions
 winit = params.phi/pinit
 agg = (A=1.0, W=winit, P=pinit)
@@ -41,6 +41,11 @@ result = optimize(x -> ss_equil_resid(x, params)[1], 2.15, 2.3, GoldenSection())
 pss = Optim.minimizer(result)
 
 error, Vadjust, Vnoadjust, Vout, kpol, omegass, Yss, Iss, Nss = ss_equil_resid(pss, params)
+kdistss = sum(omegass, dims=2)
+shockdistss = sum(omegass, dims=1)
+
+
+plot(params.zgrid, kpol[1, :])
 
 sizev = params.nk * params.nz
 sizedist = params.nkdense * params.nz
@@ -90,10 +95,73 @@ end
 
 irf_vars = irf[(end-4):end, :]
 
-pp = plot(1:(Tirf), irf_vars[1, :], title="Price")
-pY = plot(1:(Tirf), irf_vars[2, :], title="Output")
-pI = plot(1:(Tirf), irf_vars[3, :], title="Investment")
-pL = plot(1:(Tirf), irf_vars[4, :], title="Labour")
+pp = plot(1:(Tirf), 100*irf_vars[1, :]./pss, title="Price (%)")
+pY = plot(1:(Tirf), 100*irf_vars[2, :]./Yss, title="Output (%)")
+pI = plot(1:(Tirf), 100*irf_vars[3, :]./Iss, title="Investment (%)")
+pL = plot(1:(Tirf), 100*irf_vars[4, :]./Nss, title="Labour (%)")
 pA = plot(1:(Tirf), irf_vars[5, :], title="TFP")
-plot(pp, pY, pI, pL, pA, layout=(2,3), legend=false
+plot(pp, pY, pI, pL, pA, layout=(2,3), legend=false)
 savefig("kt2008/reiter/tfp_shock.png")
+
+# check irf of distribution
+irf_kdist = zeros(params.nkdense, Tirf)
+irf_shockdist = zeros(params.nz, Tirf)
+irf_dist = irf[(2*sizev + params.nz+ 1):(2*sizev + params.nz+ sizedist), :]
+for t=1:Tirf
+    irf_dist_t = reshape(irf_dist[:, t], params.nkdense, params.nz)
+    kdist = sum(irf_dist_t, dims=2)
+    shockdist = sum(irf_dist_t, dims=1)
+    irf_kdist[:, t] = kdistss + kdist
+    irf_shockdist[:, t] = shockdistss + shockdist
+
+end
+
+plot(params.kgrid_dense, irf_kdist[:, 1], label = "Kdist = T=1")
+plot!(params.kgrid_dense, irf_kdist[:, 5], label = "Kdist = T=5")
+plot!(params.kgrid_dense, irf_kdist[:, 10], label = "Kdist = T=10")
+plot!(params.kgrid_dense, irf_kdist[:, Tirf], label = "Kdist = T=final")
+plot!(params.kgrid_dense, kdistss, label = "Kdist ss")
+# kdist moves DOWN on impact. Not great
+
+plot(params.zgrid, irf_shockdist[:, 1], label = "Shockdist = T=1")
+plot!(params.zgrid, irf_shockdist[:, 5], label = "Shockdist = T=5")
+plot!(params.zgrid, irf_shockdist[:, 10], label = "Shockdist = T=10")
+plot!(params.zgrid, irf_shockdist[:, Tirf], label = "Shockdist = T=final")
+plot!(params.zgrid, shockdistss', label = "Shockdist ss")
+
+# lets see how the policy function evolves
+irf_polk = repeat(kpol[1, :], 1, 20) + irf_dist[(2*sizev+1):(2*sizev + params.nz), :]
+plot(params.zgrid, irf_polk[:, 1], label = "Policy t= 1")
+plot!(params.zgrid, irf_polk[:, 5], label = "Policy t= 5")
+plot!(params.zgrid, irf_polk[:, 10], label = "Policy t= 10")
+plot!(params.zgrid, irf_polk[:, Tirf], label = "Policy t= Final")
+plot!(params.zgrid, kpol[1, :], label = "Policy ss")
+# policy function doesnt really move over time
+
+# lets check the value functions and adjustment probabilities
+# value funcs across z for the middle z value
+irf_vaval = zeros(params.nk, Tirf)
+irf_vnaval = zeros(params.nk, Tirf)
+irf_xi = zeros(params.nk, Tirf)
+irf_vaval_sub = irf[1:sizev, :]
+irf_vnaval_sub = irf[sizev+1:2*sizev, :]
+for t = 1:Tirf
+    vaval_t = reshape(irf_vaval_sub[:, t], params.nk, params.nz)
+    vaval_t_z = vaval_t[:, 3]
+    vnaval_t = reshape(irf_vnaval_sub[:, t], params.nk, params.nz)
+    vnaval_t_z = vnaval_t[:, 3]
+    xi = (vaval_t_z - vnaval_t_z) ./ params.phi
+
+    irf_vaval[:, t] = vaval_t_z
+    irf_vnaval[:, t] = vnaval_t_z
+    irf_xi[:, t] = xi
+end
+
+plot(params.kgrid, Vadjust[:, 3] + irf_vaval[:, 1], label = "Va t=1")
+plot!(params.kgrid,Vadjust[:, 3] +  irf_vaval[:, 5], label = "Va t=5")
+plot!(params.kgrid, Vadjust[:, 3] + irf_vaval[:, 10], label = "Va t=10")
+plot!(params.kgrid, Vadjust[:, 3], label = "Va ss")
+
+plot(params.kgrid, irf_xi[:, 1], label = "Va t=1")
+plot!(params.kgrid, irf_xi[:, 5], label = "Va t=5")
+plot!(params.kgrid, irf_xi[:, 10], label = "Va t=10")
