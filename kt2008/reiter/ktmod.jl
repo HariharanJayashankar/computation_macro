@@ -634,7 +634,7 @@ function Fsys(Xl, X, η, ϵ, params)
     kpol_l = repeat(Xl[(2*sizev+1):(2*sizev + nz)]', nk, 1)
     kpol = repeat(X[(2*sizev+1):(2*sizev + nz)]', nk, 1)
     omega_l = reshape(Xl[(2*sizev + nz+ 1):(2*sizev + nz+ sizedist)], nkdense, nz)
-    omega = reshape(Xl[(2*sizev + nz+ 1):(2*sizev + nz+ sizedist)], nkdense, nz)
+    omega = reshape(X[(2*sizev + nz+ 1):(2*sizev + nz+ sizedist)], nkdense, nz)
 
     # unpacking aggregates
     pl, Yl, Il, Nl, Al = Xl[(2*sizev + nz+ sizedist +1):end]
