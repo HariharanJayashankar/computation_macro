@@ -483,7 +483,7 @@ function updateDist(omega0, kpol_dense, xipol_dense, params)
 
             elseif kstar >= kmax
                 kidx_hi = nkdense
-                kidx_lo = idx_hi - 1
+                kidx_lo = kidx_hi - 1
                 wt_lo = 0.0
                 wt_hi = 1.0
             end
@@ -515,7 +515,7 @@ function updateDist(omega0, kpol_dense, xipol_dense, params)
 
             elseif kval_adj >= kmax
                 kidx_hi = nkdense
-                kidx_lo = idx_hi - 1
+                kidx_lo = kidx_hi - 1
                 wt_lo = 0.0
                 wt_hi = 1.0
             end

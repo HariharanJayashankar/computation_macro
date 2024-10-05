@@ -95,5 +95,5 @@ pY = plot(1:(Tirf), irf_vars[2, :], title="Output")
 pI = plot(1:(Tirf), irf_vars[3, :], title="Investment")
 pL = plot(1:(Tirf), irf_vars[4, :], title="Labour")
 pA = plot(1:(Tirf), irf_vars[5, :], title="TFP")
-plot(pp, pY, pI, pL, pA, layout=(2,3), legend=false)
-# savefig("tfp_shock.png")
+plot(pp, pY, pI, pL, pA, layout=(2,3), legend=false
+savefig("kt2008/reiter/tfp_shock.png")
