@@ -293,8 +293,8 @@ function getVout(Vadjust, Vnoadjust, params)
 
     @unpack nk, nz, eta, kgrid, zgrid, alpha, zP, beta , delta, phi, xibar = params
 
-    xibar_mat = zeros(nk, nz)
-    Vout = zeros(nk, nz)
+    xibar_mat = zeros(eltype(Vadjust), nk, nz)
+    Vout = zeros(eltype(Vadjust), nk, nz)
 
     for ki = 1:nk
         for zi = 1:nz
@@ -454,7 +454,7 @@ function updateDist(omega0, kpol_dense, xipol_dense, params)
     @unpack nk, nz, kmin, kgrid, nkdense, 
     kgrid_dense, xibar, kmin, kmax, zP, delta = params
 
-    omega1 = zeros(nkdense, nz)
+    omega1 = zeros(eltype(omega0), nkdense, nz)
     for zi = 1:nz
 
         kstar = kpol_dense[1, zi]
@@ -661,7 +661,7 @@ function Fsys(Xl, X, η, ϵ, params)
     Vnoadj_l_check += η_vnoadj
 
     # policy func error
-    kpol_error = zeros(nz)
+    kpol_error = zeros(eltype(X), nz)
     for zi = 1:nz
         Ex = 0.0
         kstar = kpol_l[1, zi]
@@ -669,12 +669,12 @@ function Fsys(Xl, X, η, ϵ, params)
             vprimeinter = Derivative(1) * extrapolate(interpolate(kgrid, V1[:, z1i], BSplineOrder(4)), Smooth())
             Ex +=  zP[zi, z1i] * vprimeinter(kstar)
         end
-        kpol_error[zi] = p - beta*Ex + η_kpol[zi]
+        kpol_error[zi] = pl - beta*Ex + η_kpol[zi]
     end
 
     # get xipol_l dense by interpolating value functions
-    xipol_l_dense = zeros(nkdense, nz)
-    kpol_l_dense = zeros(nkdense, nz)
+    xipol_l_dense = zeros(eltype(X), nkdense, nz)
+    kpol_l_dense = zeros(eltype(X), nkdense, nz)
     for ki = 1:nkdense
         for zi = 1:nz
             zval = exp(zgrid[zi])
@@ -747,4 +747,58 @@ function Fsys(Xl, X, η, ϵ, params)
     return residual
 
     
+end
+
+
+#==
+Linarizeed coefficients
+==#
+function linearized_coeffs(equations, xss, ηss, ϵ_ss, p)
+
+    # l for lag
+    function Fsys_l(Xl, xss, ηss, ϵ, p)
+
+        xss = convert.(eltype(Xl), xss)
+        ϵ = convert.(eltype(Xl), ϵ)
+        ηss = convert.(eltype(Xl), ηss)
+        residout = equations(Xl, xss, ηss, ϵ, p)
+
+    end
+
+    # c for current
+    function Fsys_c(X, xss, ηss, ϵ, p)
+
+        xss = convert.(eltype(X), xss)
+        ϵ = convert.(eltype(X), ϵ)
+        ηss = convert.(eltype(X), ηss)
+        residout = equations(xss, X, ηss, ϵ, p)
+
+    end
+
+    # eta
+    function Fsys_eta(xss, η, ϵ, p)
+
+        xss = convert.(eltype(η), xss)
+        ϵ = convert.(eltype(η), ϵ)
+        residout = equations(xss, xss, η, ϵ, p)
+
+    end
+
+    # eps for epsilon
+    function Fsys_eps(xss, ηss, ϵ, p)
+
+        xss = convert.(eltype(ϵ), xss)
+        ηss = convert.(eltype(ϵ), ηss)
+        residout = equations(xss, xss, ηss, ϵ, p)
+
+    end
+
+
+    H1 = ForwardDiff.jacobian(t -> Fsys_l(t, xss, ηss, ϵ_ss, p), xss)
+    H2 = ForwardDiff.jacobian(t -> Fsys_c(t,  xss, ηss,  ϵ_ss, p), xss)
+    H3 = ForwardDiff.jacobian(t -> Fsys_eta(xss, t, ϵ_ss, p), ηss)
+    H4 = ForwardDiff.jacobian(t -> Fsys_eps(xss, ηss, t , p), [0.0])
+
+    return H1, H2, H3, H4
+
 end

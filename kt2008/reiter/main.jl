@@ -66,11 +66,11 @@ Fout = Fsys(xss, xss, ηss, [0.0], params)
 maximum(abs.(Fout))
 findall(abs.(Fout) .≈ maximum(abs.(Fout)))
 
-H1 = FiniteDiff.finite_difference_jacobian(t -> Fsys(t, xss,  ηss, [0.0], params), xss)
-H2 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, t,  ηss, [0.0], params), xss)
-H3 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, xss,  t, [0.0], params), ηss)
-H4 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, xss,  xss, t, params), [0.0])
-
+# H1 = FiniteDiff.finite_difference_jacobian(t -> Fsys(t, xss,  ηss, [0.0], params), xss)
+# H2 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, t,  ηss, [0.0], params), xss)
+# H3 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, xss,  t, [0.0], params), ηss)
+# H4 = FiniteDiff.finite_difference_jacobian(t -> Fsys(xss, xss,  xss, t, params), [0.0])
+H1, H2, H3, H4=linearized_coeffs(Fsys, xss, ηss, [0.0], params)
 
 println("Running Gensys")
 G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(xss,1)), H4, H3)
@@ -102,6 +102,9 @@ pL = plot(1:(Tirf), 100*irf_vars[4, :]./Nss, title="Labour (%)")
 pA = plot(1:(Tirf), irf_vars[5, :], title="TFP")
 plot(pp, pY, pI, pL, pA, layout=(2,3), legend=false)
 savefig("kt2008/reiter/tfp_shock.png")
+
+
+
 
 # check irf of distribution
 irf_kdist = zeros(params.nkdense, Tirf)
