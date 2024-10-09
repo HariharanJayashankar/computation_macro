@@ -10,7 +10,7 @@ include("gensysdt.jl")
 # read jacobians
 read_jacob = false
 
-params = @with_kw (
+paramgen = @with_kw (
     β = 0.97^(1/12),
     ζ = 1.0,
     ν = 1.0,
@@ -25,8 +25,8 @@ params = @with_kw (
     # otehr parameters (numeric mostly)
     m =  3, # tauchen grid distance
     na = 10, #number of grids in shock
-    np = 200, # number of price grids
-    np_fine = np, # number of price grids on histogram
+    np = 20, # number of price grids
+    npdense = 50, # number of price grids on histogram
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
     shock = tauchen(na, ρ, σ, 0.0, m),
@@ -43,10 +43,10 @@ params = @with_kw (
     plo = 0.8*pflex,
     phi = 1.4*pflex,
     pgrid = range(plo, phi, length=np),
-    pgrid_fine = range(plo, phi, length=np_fine),
+    pgrid_dense = range(plo, phi, length=npdense),
     ρ_agg = 0.9
 )
-p = params()
+params = paramgen()
 
 
 # equilibrium
