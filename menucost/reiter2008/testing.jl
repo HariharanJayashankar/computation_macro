@@ -69,6 +69,11 @@ pdist = sum(omegass, dims=2)
 plot(pdist)
 
 ssresult = optimize(
-    x -> equilibriumResidual(x, params),
-    [1.0, 1.0]
+    x -> equilibriumResidual(x, params)[1],
+    [1.0, 1.0],
+    Optim.Options(
+        show_trace=true,
+        g_tol = 1e-4
     )
+)
+

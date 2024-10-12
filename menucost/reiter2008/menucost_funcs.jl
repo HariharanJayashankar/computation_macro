@@ -290,7 +290,7 @@ function dist_updateshocks(omega0, params, Z)
 
     omega1hat = zeros(params.npdense, params.na);
     agrid = log(Z) .+ params.agrid
-    for pidx = 1:npdense
+    for pidx = 1:params.npdense
         for aidx = 1:params.na
 
             aval = agrid[aidx]
@@ -556,16 +556,17 @@ function equilibriumResidual(x, p)
     w = x[1]
     Y = x[2]
     agg = (w=w, Y=Y, A=0.0);
-    V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
+    v1, Vadjust, Vnoadjust, polp, pollamb, _, _  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
+    pollamb_dense = makedense(Vadjust, Vnoadjust, params, agg)
 
     # get joint distribution of prices and shocks
-    omegahat, omega = genJointDist(polp, pollamb, p; printinfo=false);
+    omegahat, omega = genJointDist(polp, pollamb_dense, p; printinfo=false);
 
     # get implied aggregate price
     aggprice = 0.0
-    for pidx=1:p.np_fine
+    for pidx=1:p.npdense
         for aidx = 1:p.na
-            pval = p.pgrid[pidx]
+            pval = p.pgrid_dense[pidx]
             aggprice += pval^(1.0 - p.ϵ) * omega[pidx, aidx]
         end
     end
@@ -577,11 +578,11 @@ function equilibriumResidual(x, p)
     # integrate
     Ld = 0.0
     F = 0.0
-    for pidx = 1:p.np_fine
+    for pidx = 1:p.npdense
         for aidx = 1:p.na
-            pval = p.pgrid[pidx]
+            pval = p.pgrid_dense[pidx]
             a1val = p.agrid[aidx]
-            pchange = pollamb[pidx, aidx]
+            pchange = pollamb_dense[pidx, aidx]
             F += p.κ * pchange * omegahat[pidx, aidx]
             Ld += pval^(-p.ϵ) * exp(-a1val) * Y * omega[pidx,aidx]
         end
@@ -632,17 +633,23 @@ function residequations(Xl, X,
                 p, yss )
     
     # default params
-    @unpack np, na, np_fine = p
+    @unpack np, na, npdense = p
 
-    sizedist = np_fine * na
+    sizedist = npdense * na
     sizev = np * na
 
     # unpacking
     omega_l = reshape(Xl[1:sizedist], np_fine, na)
     omega = reshape(X[1:sizedist], np_fine, na)
 
-    Vl = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
-    V = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
+    Vadj_l = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
+    Vadj = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
+
+    Vnoadj_l = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
+    Vnoadj = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
+
+    Vnoadj_l = reshape(Xl[(sizedist+1):(sizedist+sizev)], np, na)
+    Vnoadj = reshape(X[(sizedist+1):(sizedist+sizev)], np, na)
 
     wl, rl, Yl, Cl, Zl  = Xl[(sizedist+sizev+1):(end-1)]
     w, r, Y, C, Z = X[(sizedist+sizev+1):(end-1)]
@@ -673,7 +680,7 @@ function residequations(Xl, X,
     ==#
     # this gives distribution at the start for period t before period t shocks
     # have been realized
-    omega1, omega0hat = Tfunc_general(omega_l, polp_l_check, pollamb_l_check, p, p.np_fine, infl, Z)
+    omega1, omega0hat = Tfunc_general(omega_l, polp_l_check, pollamb_l_check, p, infl, Z)
     # omega1hat = Tfunc_updateshocks(omega1, p, p.np_fine, Z)
 
     # get implied aggregate price
@@ -692,7 +699,7 @@ function residequations(Xl, X,
     # integrate
     Ld = 0.0
     F = 0.0
-    for pidx = 1:p.np_fine
+    for pidx = 1:p.npdense
         for aidx = 1:p.na
             pval = p.pgrid[pidx]
             aval = p.agrid[aidx]
