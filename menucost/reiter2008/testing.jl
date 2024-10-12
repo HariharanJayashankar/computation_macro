@@ -50,26 +50,25 @@ paramgen = @with_kw (
 params = paramgen()
 
 # manally testing viter
-
-@unpack np, na, pgrid, agrid, ϵ, β, aP, κ, plo, phi = params
-agg = (Y=1.0, w=1.0, A=0.0)
-Vadjust1 = zeros(na)
-Vnoadjust1 = zeros(np, na)
-Vadjust0 = zeros(na)
-Vnoadjust0 = zeros(np, na)
-polp = collect(range(phi, plo, length=na))
-pollamb = BitArray(undef, np, na)
-v0 = zeros(np, na)
-
-T_adjust_max!(Vadjust1, polp, Vadjust0, Vnoadjust0, params, agg)
-
+@time viterFirm((w=1.0, Y=1.0, A=0.0), params, howarditer=50)
 v1, Vadjust1, Vnoadjust1, polp, pollamb, iter, error = viterFirm((w=1.0, Y=1.0, A=0.0), params, howarditer=50)
 
 plot(params.pgrid, v1[:, 3])
-plot!(params.pgrid, v1[:, 1])
-plot!(params.pgrid, v1[:, 5])
+plot(params.pgrid, v1[:, 1])
+plot(params.pgrid, v1[:, 5])
 
 plot(params.agrid, Vadjust1)
 plot(params.agrid, Vnoadjust1[5, :])
 heatmap(params.agrid, params.pgrid, pollamb')
 plot(params.agrid, polp)
+
+pollamb_dense = makedense(Vadjust1, Vnoadjust1, params, (w=1.0, Y=1.0, A=0.0))
+omegass, omegahatss = genJointDist(polp, pollamb_dense, params)
+
+pdist = sum(omegass, dims=2)
+plot(pdist)
+
+ssresult = optimize(
+    x -> equilibriumResidual(x, params),
+    [1.0, 1.0]
+    )

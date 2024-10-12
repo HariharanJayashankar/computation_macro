@@ -201,8 +201,8 @@ function  viterFirm(agg, params;
     Vnoadjust0 = zeros(np, na)
     Vadjust1 = zeros(na)
     Vnoadjust1 = zeros(np, na)
-    polp = collect(range(phi, plo, length=na))
-    pollamb = BitArray(undef, np, na)
+    polp0 = collect(range(phi, plo, length=na))
+    pollamb0 = BitArray(undef, np, na)
 
     error = 10;
     iter = 0;
@@ -210,23 +210,32 @@ function  viterFirm(agg, params;
     while (error > tol) && (iter < maxiter)
 
         for hidx=1:howarditer
-            T_adjust_given!(Vadjust1, polp, Vadjust0, Vnoadjust0, params, agg)
+            T_adjust_given!(Vadjust1, polp0, Vadjust0, Vnoadjust0, params, agg)
             T_noadjust!(Vnoadjust1, Vadjust0, Vnoadjust0, params, agg, infl=params.Π_star)
             Vadjust0 = deepcopy(Vadjust1)
             Vnoadjust0 = deepcopy(Vnoadjust1)
         end
 
         # iterate over choices
-        T_adjust_max!(Vadjust1, polp, Vadjust0, Vnoadjust0, params, agg)
+        polp1 = zero(polp0)
+        T_adjust_max!(Vadjust1, polp1, Vadjust0, Vnoadjust0, params, agg)
         T_noadjust!(Vnoadjust1, Vadjust0, Vnoadjust0, params, agg, infl=params.Π_star)
 
-        error_adj = maximum(abs.(Vadjust1 - Vadjust0))
-        error_noadj = maximum(abs.(Vnoadjust1 - Vnoadjust0))
-        error = max(error_adj, error_noadj)
+        pollamb1 = repeat(Vadjust1', np, 1)  .> Vnoadjust1
+
+        # error_adj = maximum(abs.(Vadjust1 - Vadjust0))
+        # error_noadj = maximum(abs.(Vnoadjust1 - Vnoadjust0))
+        # error = max(error_adj, error_noadj)
+        error_polp = maximum(abs.(polp1 - polp0))
+        error_pollamb = maximum(abs.(pollamb1 - pollamb0))
+        error = max(error_polp, error_pollamb)
+
+        polp0 = deepcopy(polp1)
+        pollamb0 = deepcopy(pollamb1)
 
         iter += 1
-        Vadjust0 = deepcopy(Vadjust1)
-        Vnoadjust0 = deepcopy(Vnoadjust1)
+        # Vadjust0 = deepcopy(Vadjust1)
+        # Vnoadjust0 = deepcopy(Vnoadjust1)
 
         if (iter == 1 || mod(iter, printinterval) == 0) && printinfo
             println("Iterations: $iter, Error: $error")
@@ -246,7 +255,7 @@ function  viterFirm(agg, params;
     pollamb = repeat(Vadjust1', np, 1)  .> Vnoadjust1
     vout = max.(repeat(Vadjust1', np, 1), Vnoadjust1)
 
-    return vout, Vadjust1, Vnoadjust1, polp, pollamb, iter, error
+    return vout, Vadjust1, Vnoadjust1, polp0, pollamb0, iter, error
 
 end
 
@@ -257,13 +266,15 @@ Make policy functions denser in the p dimension
 ==#
 function makedense(Vadjust, Vnoadjust, params, agg)
 
-    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, npdense = params
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, npdense, pgrid_dense = params
 
-    pollamb_dense = zeros(np, na)
+    pollamb_dense = zeros(npdense, na)
 
     for pidx = 1:npdense
         for aidx = 1:na
-            pollamb_dense[pidx, aidx] = Vadjust[aidx] > Vnoadjust[pidx, aidx]
+            pval = pgrid_dense[pidx]
+            Vnoadjust_interp = interpolate(pgrid, Vnoadjust[:, aidx], BSplineOrder(4))
+            pollamb_dense[pidx, aidx] = Vadjust[aidx] > Vnoadjust_interp(pval)
         end
     end
 
@@ -273,13 +284,13 @@ end
 #==
 yougn simulation of updating exogenous shock process
 ==#
-function dist_updateshocks(omega0, params, ngrid, Z)
+function dist_updateshocks(omega0, params, Z)
 
     aP = params.aP
 
-    omega1hat = zeros(ngrid, params.na);
+    omega1hat = zeros(params.npdense, params.na);
     agrid = log(Z) .+ params.agrid
-    for pidx = 1:ngrid
+    for pidx = 1:npdense
         for aidx = 1:params.na
 
             aval = agrid[aidx]
@@ -338,29 +349,29 @@ which spit out the index of the pgrid
 If inflation is non zero use should pass in the interpolated policy functions
 which take in the actual pvalues and spit out the pvalues aswell
 ==#
-function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
+function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
     
 
-    omega1hat = Tfunc_updateshocks(omega0, params, params.np, Z)
+    omega1hat = dist_updateshocks(omega0, params, Z)
 
     # update policies
-    omega1 = zeros(ngrid, params.na);
+    omega1 = zeros(params.npdense, params.na);
     
 
-    for pidx = 1:params.np
+    for pidx = 1:params.npdense
         for aidx = 1:params.na
 
             # non adjusters
-            pval0 = params.pgrid[pidx]
+            pval0 = params.pgrid_dense[pidx]
             pval = pval0 / (1.0 + infl)
             aval = log(Z) + params.agrid[aidx]
             if pval > params.plo && pval < params.phi
-                pidx_vals = searchsorted(params.pgrid, pval)
+                pidx_vals = searchsorted(params.pgrid_dense, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
+                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
 
-                wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
+                wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1 - wt_lo
 
@@ -379,15 +390,15 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
             end
 
             # adjusters
-            pval0 = params.pgrid[pidx]
+            pval0 = params.pgrid_dense[pidx]
             pval = polp[aidx]
             if pval > params.plo && pval < params.phi
-                pidx_vals = searchsorted(params.pgrid, pval)
+                pidx_vals = searchsorted(params.pgrid_dense, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
+                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
 
-                wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
+                wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1.0 - wt_lo
                 
@@ -416,9 +427,9 @@ end
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
 
-    omega1 = ones(params.np_fine, params.na);
-    omega1 = omega1 ./ (params.np_fine*params.na);
-    omega1hat = zeros(params.np_fine, params.na);
+    omega1 = ones(params.npdense, params.na);
+    omega1 = omega1 ./ (params.npdense*params.na);
+    omega1hat = zeros(params.npdense, params.na);
     # omega1 = sparse(omega1)
     # omega1hat = sparse(omega1hat)
     error = 10;
@@ -427,7 +438,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     while (error > tol) && (iter < maxiter)
 
         omega0 = omega1
-        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np_fine, params.Π_star, 1.0)
+        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.Π_star, 1.0)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
         omega0hat = omega1hat;
@@ -544,7 +555,7 @@ function equilibriumResidual(x, p)
 
     w = x[1]
     Y = x[2]
-    agg = (w=w, Y=Y);
+    agg = (w=w, Y=Y, A=0.0);
     V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
 
     # get joint distribution of prices and shocks
