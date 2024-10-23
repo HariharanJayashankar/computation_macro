@@ -40,10 +40,10 @@ paramgen = @with_kw (
     w_flex = flexsoln[3],
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
-    pss = log.(pflex),
-    plo = 0.3*pflex,
-    phi = 2.5*pflex,
-    pgrid = range(plo, phi, length=np),
+    pss = pflex,
+    plo = 0.5*pflex,
+    phi = 2.0*pflex,
+    pgrid = exp.(range(log(plo), log(phi), length=np)),
     pgrid_dense = range(plo, phi, length=npdense),
     ρ_agg = 0.9
 )
@@ -76,4 +76,94 @@ ssresult = optimize(
         g_tol = 1e-4
     )
 )
+w, Y = Optim.minimizer(ssresult)
+error, w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C = equilibriumResidual(
+    [w, Y], params
+)
+
+sizedist = params.npdense * params.na
+sizev = params.np * params.na
+xss = [
+    omega...,
+    Vadjust...,
+    Vnoadjust...,
+    polp...,
+    w,
+    params.iss,
+    Y,
+    C,
+    0.0,
+    0.0
+]
+
+
+ηss = zeros(2*params.na+sizev+1)
+ϵ_ss = zeros(2)
+
+Fout = residequations(xss, xss, ηss, ϵ_ss, params, Y)
+@show maximum(abs.(Fout))
+findall(abs.(Fout) .≈ maximum(abs.(Fout)))
+findall(abs.(Fout) .> 1e-2)
+H1 = FiniteDiff.finite_difference_jacobian(t -> residequations(t, xss,  ηss, ϵ_ss, params, Y), xss)
+H2 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, t,  ηss, ϵ_ss, params, Y), xss)
+H3 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  t, ϵ_ss, params, Y), ηss)
+H4 = FiniteDiff.finite_difference_jacobian(t -> residequations(xss, xss,  xss, t, params, Y), ϵ_ss)
+
+
+println("Running Gensys")
+G1, Const, impact, fmat, fwt, ywt, gev, eu, loose = gensysdt(-H2, H1,zeros(size(xss,1)), H4, H3)
+@show eu
+
+println("Making plots...")
+# ==  plot IRFS == #
+Tirf = 20
+
+# TFP SHOCK
+ϵ_tfp_irf = zeros(2, Tirf)
+ϵ_tfp_irf[1, 1] = params.σ # shock value for tfp
+irf = zeros(size(xss, 1), Tirf)
+for t=1:Tirf
+    if t == 1
+        # everything is deviations from ss 
+        irf[:, t] =  impact * ϵ_tfp_irf[:, 1]
+    else
+        irf[:, t] = G1 * irf[:, t-1]
+    end
+end
+
+irf_vars = irf[(end-5):end, :]
+
+pw = plot(1:(Tirf), irf_vars[1, :], title="Wage")
+pr = plot(1:(Tirf), irf_vars[2, :], title="Interest Rate")
+pY = plot(1:(Tirf), irf_vars[3, :], title="Output")
+pC = plot(1:(Tirf), irf_vars[4, :], title="Consumption")
+pZ = plot(1:(Tirf), irf_vars[5, :], title="TFP")
+# pZmon = plot(1:Tirf, irf_vars[6, :], title="Monetary Policy")
+pinfl = plot(1:(Tirf), 100.0 * (exp.(irf_vars[6, :]) .- 1.0), title="Inflation (%)")
+plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
+savefig("menucost/reiter2008/tfp_shock.png")
+
+# monetary policy SHOCK
+ϵ_mon_irf = zeros(2, Tirf)
+ϵ_mon_irf[2, 1] = 0.25 # shock value
+irf = zeros(size(xss, 1), Tirf)
+for t=1:Tirf
+    if t == 1
+        irf[:, t] = impact *  ϵ_mon_irf[:, 1]
+    else
+        irf[:, t] = G1 * (irf[:, t-1])
+    end
+end
+
+irf_vars = irf[(end-5):end, :]
+pw = plot(1:Tirf, irf_vars[1, :], title="Wage")
+pr = plot(1:Tirf, irf_vars[2, :], title="Interest Rate")
+pY = plot(1:Tirf, irf_vars[3, :], title="Output")
+pC = plot(1:Tirf, irf_vars[4, :], title="Consumption")
+pZ = plot(1:Tirf, irf_vars[5, :], title="TFP")
+# pZmon = plot(1:Tirf, irf_vars[6, :], title="TR Shock")
+pinfl = plot(1:Tirf, 100.0 * (exp.(irf_vars[6, :]) .- 1.0), title="Inflation (%)")
+plot(pw, pr, pY, pC, pZ, pinfl, layout=(2,4), legend=false)
+savefig("menucost/reiter2008/mon_shock.png")
+
 
