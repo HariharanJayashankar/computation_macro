@@ -59,7 +59,7 @@ plot(params.pgrid, v1[:, 5])
 
 plot(params.agrid, Vadjust1)
 plot(params.agrid, Vnoadjust1[5, :])
-heatmap(params.agrid, params.pgrid, pollamb')
+heatmap(pollamb')
 plot(params.agrid, polp)
 
 pollamb_dense = makedense(Vadjust1, Vnoadjust1, params, (w=1.0, Y=1.0, A=0.0))
