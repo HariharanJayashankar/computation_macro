@@ -5,6 +5,7 @@ using FiniteDifferences
 using FiniteDiff
 using Optim
 using FastGaussQuadrature
+using BSplineKit
 
 #==
  This function maps z in [-1,1] into x in [xmin,xmax]; inverse of scale_down
@@ -174,6 +175,120 @@ function flexsoln(ϵ, agrid, aPstationary, ζ, ν )
 end
 
 #==
+T_adjusting_given
+- update value function for adjusting taking as given the policy
+- overwrites V
+==#
+function T_adjust_given!(V, polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
+
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
+
+    @inbounds for aidx = 1:na
+        pval = polp[aidx]
+        aval = agg.A .+ agrid[aidx]
+
+        profit = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y - κ
+
+        Ex = 0.0
+        @inbounds for a1idx = 1:na
+            vnoadj1_fun = BSplineKit.extrapolate(BSplineKit.interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
+            vnext = max(vnoadj1_fun(pval), Vadj1[a1idx])
+            Ex += aP[aidx, a1idx] * vnext
+        end
+        
+        valadjust = profit + β * sdf * Ex
+
+        V[aidx] = valadjust
+        
+
+    end
+
+
+end
+
+#==
+Bellman operator for not adjusting
+==#
+function T_noadjust!(V, Vadj1, Vnoadj1, params ,agg; sdf=1.0, infl = 0.0)
+
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
+
+    @inbounds for pidx = 1:np
+        @inbounds for aidx = 1:na
+
+            pval = pgrid[pidx] / (1.0 + infl)
+            aval = agg.A .+ agrid[aidx]
+            profit = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y
+
+            Ex = 0.0
+            @inbounds for a1idx = 1:na
+                vnoadj1_fun = BSplineKit.extrapolate(BSplineKit.interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
+                vnext = max(vnoadj1_fun(pval), Vadj1[a1idx])
+                Ex += aP[aidx, a1idx] * vnext
+            end
+            
+            valnoadjust = profit + β * sdf * Ex
+
+            V[pidx, aidx] = valnoadjust
+
+        end
+    end
+
+
+end
+
+#==
+Bellman operator for adjusting
+    - choose optimal policy
+    - overwrites polp and v
+==#
+function T_adjust_max!(V, polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
+
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, plo, phi = params
+
+    @inbounds for aidx = 1:na
+
+        aval = agg.A .+ agrid[aidx]
+
+        function objective(p1)
+            profit = (p1^(1-ϵ) - p1^(-ϵ)*(agg.w/exp(aval))) * agg.Y - κ
+
+            Ex = 0.0
+            @inbounds for a1idx = 1:na
+                vnoadj1_fun = BSplineKit.extrapolate(BSplineKit.interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
+                vnext = max(vnoadj1_fun(p1), Vadj1[a1idx])
+                Ex += aP[aidx, a1idx] * vnext
+            end
+
+            valadjust =  profit + β * sdf * Ex
+
+            return -valadjust
+
+        end
+        
+        result = optimize(objective, plo, phi, Brent())
+        pstar = Optim.minimizer(result)
+        polp[aidx] = pstar
+
+        profit = (pstar^(1-ϵ) - pstar^(-ϵ)*(agg.w/exp(aval))) * agg.Y - κ
+
+        Ex = 0.0
+        @inbounds for a1idx = 1:na
+            vnoadj1_fun = BSplineKit.extrapolate(BSplineKit.interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
+            vnext = max(vnoadj1_fun(pstar), Vadj1[a1idx])
+            Ex += aP[aidx, a1idx] * vnext
+        end
+        
+        valadjust = profit + β * sdf * Ex
+
+        V[aidx] = valadjust
+
+    end
+
+
+end
+
+#==
 value function iterations
 v(p, a)
 where p is firms last price
@@ -186,51 +301,53 @@ of p and a
 agg is a struct with fields w and Y
 ==#
 function  viterFirm(agg, params; 
-                    stochdiscfactor = 1,
-                    maxiter=10000, tol=1e-6, 
-                    printinterval=1000, printinfo=true)
+                    maxiter=1000, tol=1e-6, 
+                    printinterval=50, printinfo=true,
+                    howarditer=100)
 
 
-    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, plo, phi = params
 
     # initial values for v
-    vadjust = zeros(np, na)
-    vnoadjust = zeros(np, na)
-    polp = zeros(Int64, 1, na)
-    pollamb = BitArray(undef, np, na)
-    pstar = Matrix{CartesianIndex{2}}(undef, 1, na)
-    v1 = zeros(np, na)
-
-    # preallocate profit matrix
-    profit_mat = zeros(params.np, params.na);
-    for pidx=1:np
-        for aidx=1:na
-            pval = params.pgrid[pidx];
-            aval = params.agrid[aidx];
-            profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
-        end
-    end
+    Vadjust0 = zeros(na)
+    Vnoadjust0 = zeros(np, na)
+    Vadjust1 = zeros(na)
+    Vnoadjust1 = zeros(np, na)
+    polp0 = collect(range(phi, plo, length=na))
+    pollamb0 = BitArray(undef, np, na)
 
     error = 10;
     iter = 0;
 
     while (error > tol) && (iter < maxiter)
 
-        v0 = v1
-        ev0 = v0 * aP';
+        for hidx=1:howarditer
+            T_adjust_given!(Vadjust1, polp0, Vadjust0, Vnoadjust0, params, agg)
+            T_noadjust!(Vnoadjust1, Vadjust0, Vnoadjust0, params, agg, infl=params.Π_star)
+            Vadjust0 = deepcopy(Vadjust1)
+            Vnoadjust0 = deepcopy(Vnoadjust1)
+        end
 
         # iterate over choices
-        vnoadjust = profit_mat + β * stochdiscfactor * ev0
-        vadjust_val = profit_mat .- κ +  β * stochdiscfactor * ev0
-        vadjustmax, pstar = findmax(vadjust_val, dims=1)
+        polp1 = zero(polp0)
+        T_adjust_max!(Vadjust1, polp1, Vadjust0, Vnoadjust0, params, agg)
+        T_noadjust!(Vnoadjust1, Vadjust0, Vnoadjust0, params, agg, infl=params.Π_star)
 
-        vadjust = repeat(vadjustmax, np, 1)
+        pollamb1 = repeat(Vadjust1', np, 1)  .> Vnoadjust1
 
-        v1 = max.(vadjust, vnoadjust)
+        # error_adj = maximum(abs.(Vadjust1 - Vadjust0))
+        # error_noadj = maximum(abs.(Vnoadjust1 - Vnoadjust0))
+        # error = max(error_adj, error_noadj)
+        error_polp = maximum(abs.(polp1 - polp0))
+        error_pollamb = maximum(abs.(pollamb1 - pollamb0))
+        error = max(error_polp, error_pollamb)
 
-        error = maximum(abs.(v1 - v0))
-        iter += 1;
+        polp0 = deepcopy(polp1)
+        pollamb0 = deepcopy(pollamb1)
 
+        iter += 1
+        # Vadjust0 = deepcopy(Vadjust1)
+        # Vnoadjust0 = deepcopy(Vnoadjust1)
 
         if (iter == 1 || mod(iter, printinterval) == 0) && printinfo
             println("Iterations: $iter, Error: $error")
@@ -246,137 +363,46 @@ function  viterFirm(agg, params;
     if printinfo
         println("Firm Viter: Final iterations $iter, Final error $error")
     end
-
    
-    pollamb = vadjust .> vnoadjust
-    vout = max.(vadjust, vnoadjust)
+    pollamb = repeat(Vadjust1', np, 1)  .> Vnoadjust1
+    vout = max.(repeat(Vadjust1', np, 1), Vnoadjust1)
 
-    polp = getindex.(pstar, 1)
-    polp = repeat(polp, np, 1)
-
-    return vout, vadjust, vnoadjust, polp, pollamb, iter, error
+    return vout, Vadjust1, Vnoadjust1, polp0, pollamb0, iter, error
 
 end
 
+
 #==
-Backward induction of V - for when we know tomorrow's value function 
-infl = log(P_t/P_{t-1})
+Make policy functions denser in the p dimension
+- only outputs dense pollab funcion
 ==#
-function  vBackwardFirm(agg, params, Z, Z_f, v1, infl, infl_f; 
-                        stochdiscfactor = 1.0,
-                        maxiter=10000, tol=1e-6, 
-                        printinterval=1000, printinfo=true) 
+function makedense(Vadjust, Vnoadjust, params, agg)
 
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, npdense, pgrid_dense = params
 
-    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
-    
+    pollamb_dense = zeros(npdense, na)
 
-    # preallocate profit matrix
-    profit_infl_mat = zeros(eltype(v1), params.np, params.na);
-    profit_mat = zeros(eltype(v1), params.np, params.na);
-    for pidx=1:np
-        for aidx=1:na
-            pval = params.pgrid[pidx];
-            aval =  log(Z) + params.agrid[aidx];
-            profit_mat[pidx, aidx] = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y;
-        end
-    end
-
-    error = 10;
-    iter = 0;
-
-    # interpolate v1
-    itp = interpolate(v1, (BSpline(Linear()), BSpline(Linear())))
-    eitp = extrapolate(itp, Line())
-    v1interp = Interpolations.scale(eitp, pgrid, agrid)
-    v1_infl = zeros(eltype(v1), np, na)
-    v1_noadj = zeros(eltype(v1), np, na)
-    for pidx = 1:np
+    for pidx = 1:npdense
         for aidx = 1:na
-            pval = pgrid[pidx]
-            pval_adj = pval / exp(infl_f)
-
-            aval = log(Z_f) + agrid[aidx]
-            v1_infl[pidx, aidx] = v1interp(pval_adj, aval)
+            pval = pgrid_dense[pidx]
+            Vnoadjust_interp = BSplineKit.interpolate(pgrid, Vnoadjust[:, aidx], BSplineOrder(4))
+            pollamb_dense[pidx, aidx] = Vadjust[aidx] > Vnoadjust_interp(pval)
         end
     end
 
-    ev1_infl = v1_infl * aP';
-
-    # iterate over choices
-    vnoadjust = profit_mat + β * stochdiscfactor * ev1_infl
-    vadjust_val = profit_mat .- κ +  β * stochdiscfactor * ev1_infl
-    vadjustmax, pstar = findmax(vadjust_val, dims=1)
-
-    vadjust = repeat(vadjustmax, np, 1)
-
-    pollamb = vadjust .> vnoadjust
-    vout = max.(vadjust, vnoadjust)
-
-    polp = getindex.(pstar, 1)
-    polp = repeat(polp, np, 1)
-
-    return vout, vadjust, vnoadjust, polp, pollamb, iter, error
-
+    return pollamb_dense
 end
 
 #==
-Make transition function for distribution of (p,a)
-Given the policy functions for price changes
+yougn simulation of updating exogenous shock process
 ==#
-function Tfunc(omega0, polp, pollamb, params)
+function dist_updateshocks(omega0, params, Z)
 
     aP = params.aP
 
-    # update shock dist
-    omega1hat = zeros(eltype(omega0), params.np, params.na);
-    for pidx = 1:params.np
-        for aidx = 1:params.na
-
-            for a0idx = 1:params.na
-                omega1hat[pidx, aidx] = omega1hat[pidx, aidx] + omega0[pidx, a0idx] * aP[a0idx, aidx];
-            end
-        end
-    end
-
-    # update policies
-    omega1 = zeros(eltype(omega0), params.np, params.na);
-    for pidx = 1:params.np
-        for aidx = 1:params.na
-            
-            p1idx = polp[pidx, aidx];
-
-            # non adjusters
-            omega1[pidx, aidx] = omega1[pidx, aidx] + (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-            
-            # adjusters
-            omega1[p1idx, aidx] = omega1[p1idx, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
-        end
-    end
-
-    return omega1, omega1hat
-
-end
-
-#==
-Tfunc general is meant to be a typical Young 2010 non stochastic simulation
-function.
-- omega0 is a 2d matrix of distribvution over (p,a) in the previous period
-- omega0hat is 2d matrix of distribution over (p,a) at beginin of period
-after shocks have been realized but before pricing decisions have been made
-- polp is the policy function conditional oin adjustment - crucially in this
-function it returns the actual price value instead of the price index in the
-pricegrid
-- pollamb is {1,0} for whether a firm adjusts or not
-==#
-function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
-    
-    aP = params.aP
-
-    # update shock dist
-    omega1hat = zeros(params.np, params.na);
-    agrid = log(Z) .+ params.agrid
-    for pidx = 1:ngrid
+    omega1hat = zeros(params.npdense, params.na);
+    agrid =  params.agrid
+    for pidx = 1:params.npdense
         for aidx = 1:params.na
 
             aval = agrid[aidx]
@@ -389,7 +415,7 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
 
                 wt_lo = 1.0 - (aval - params.agrid[aidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
-                wt_hi = 1 - wt_lo
+                wt_hi = 1.0 - wt_lo
 
                 for a0idx = 1:params.na
                     omega1hat[pidx, aidx_hi] = omega1hat[pidx, aidx_hi] + wt_hi * omega0[pidx, a0idx] * aP[a0idx, aidx_hi]
@@ -414,59 +440,88 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
         end
     end
 
+    return omega1hat
+
+end
+
+#==
+Tfunc general is meant to be a typical Young 2010 non stochastic simulation
+function.
+- omega0 is a 2d matrix of distribvution over (p,a) in the previous period
+- omega0hat is 2d matrix of distribution over (p,a) at beginin of period
+after shocks have been realized but before pricing decisions have been made
+- polp is the policy function conditional oin adjustment - crucially in this
+function it returns the actual price value instead of the price index in the
+pricegrid
+- pollamb is {1,0} for whether a firm adjusts or not
+
+If inflation is non zero you can apss in the discretized policy funciton matrices
+which spit out the index of the pgrid
+
+If inflation is non zero use should pass in the interpolated policy functions
+which take in the actual pvalues and spit out the pvalues aswell
+==#
+function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
+    
+
+    omega1hat = dist_updateshocks(omega0, params, Z)
+
     # update policies
-    omega1 = zeros(ngrid, params.na);
-    for pidx = 1:ngrid
+    omega1 = zeros(params.npdense, params.na);
+    
+
+    for pidx = 1:params.npdense
         for aidx = 1:params.na
 
             # non adjusters
-            pval0 = params.pgrid[pidx]
-            pval0 = pval0 / exp(infl)
-            if pval0 > params.pgrid[1] && pval0 < params.pgrid[end]
-                pidx_vals = searchsorted(params.pgrid, pval0)
+            pval0 = params.pgrid_dense[pidx]
+            pval = pval0 / (1.0 + infl)
+            aval =  params.agrid[aidx]
+            if pval > params.plo && pval < params.phi
+                pidx_vals = searchsorted(params.pgrid_dense, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
+                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
 
-                wt_lo = 1.0 - (pval0 - params.pgrid[pidx_lo])/total_dist
+                wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1 - wt_lo
 
-                omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
-                omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
                 
 
-            elseif pval0 <= params.pgrid[1]
+            elseif pval <= params.plo
 
-                omega1[1, aidx] = omega1[1, aidx] +  (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[1, aidx] = omega1[1, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
 
-            elseif pval0 >= params.pgrid[end]
+            elseif pval >= params.phi
 
-                omega1[end, aidx] = omega1[end, aidx] +  (!pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
+                omega1[end, aidx] = omega1[end, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
 
             end
 
             # adjusters
-            pval = params.pgrid[polp[pidx, aidx]];
-            pval = pval / exp(infl);
-            if pval > params.pgrid[1] && pval < params.pgrid[end]
-                pidx_vals = searchsorted(params.pgrid, pval)
+            pval0 = params.pgrid_dense[pidx]
+            pval = polp[aidx]
+            if pval > params.plo && pval < params.phi
+                pidx_vals = searchsorted(params.pgrid_dense, pval)
                 pidx_lo = last(pidx_vals)
                 pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid[pidx_hi] - params.pgrid[pidx_lo]
+                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
 
-                wt_lo = 1.0 - (pval - params.pgrid[pidx_lo])/total_dist
+                wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
-                wt_hi = 1 - wt_lo
+                wt_hi = 1.0 - wt_lo
                 
                 omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
                 omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval <= params.pgrid[1]
+            elseif pval <= params.plo
 
                 omega1[1, aidx] = omega1[1, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval >= params.pgrid[end]
+            elseif pval >= params.phi
 
                 omega1[end, aidx] = omega1[end, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
@@ -474,19 +529,20 @@ function Tfunc_general(omega0, polp, pollamb, params, ngrid, infl, Z)
         end
     end
 
-    omega1 = omega1 ./ sum(omega1)
-    omega1hat = omega1hat ./ sum(omega1hat)
+    # omega1 = omega1 ./ sum(omega1)
+    # omega1hat = omega1hat ./ sum(omega1hat)
     return omega1, omega1hat
 
 end
+
+
+
+
 #==
 For a given set of moments and distributino parameters
 get the density for (a, p)
 m and g are matrices of size (ng, ng), where
 ng is the level of approximation
-
-Notation:
-m[i,j] is m_i^j in winberry notation
 ==#
 function getDensity(p, a, m, g, g0, params)
 
@@ -532,9 +588,25 @@ function objectiveDensity(g, m, params)
 
     alo = minimum(agrid)
     ahi = maximum(agrid)
+    pgrid_quad = scaleUp(xquad, plo, phi)
+    agrid_quad = scaleUp(xquad, alo, ahi)
+    pscale = (phi - plo)/2.0
+    ascale = (ahi - alo)/2.0
+
+
+    # gauss legendre quadrature
+    # integral = 0.0
+    # for pidx = 1:nquad
+    #     for aidx = 1:nquad
+    #         pval = pgrid_quad[pidx]
+    #         aval = agrid_quad[aidx]
+    #         integral += getDensity(log(pval), aval, m, g, 1.0, params) * wquad[pidx] * wquad[aidx]
+    #     end
+    # end
+    # integral *= pscale * ascale
 
     # simpsons quadrature
-    integral = simps2d((p,a) -> getDensity(p, a, m, g, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    integral = simps2d((p,a) -> getDensity(log(p), a, m, g, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
 
     return integral
 
@@ -555,12 +627,43 @@ function getDensityG!(G, x, m, params)
     pscale = (phi - plo)/2.0
     ascale = (ahi - alo)/2.0
 
+    # gauss legendre quadrature
+    # first two moments
+    
+
+    # G[:] .= 0.0
+    # for pidx = 1:nquad
+    #     for aidx = 1:nquad
+    #         pval = pgrid_quad[pidx]
+    #         aval = agrid_quad[aidx]
+    #         pdiff = log(pval) - m[1]
+    #         adiff = aval - m[2]
+    #         density = getDensity(log(pval), aval, m, x, 1.0, params) * wquad[pidx] * wquad[aidx]
+
+    #         G[1] += (pdiff) * density * wquad[pidx] * wquad[aidx]
+    #         G[2] += (adiff) * density * wquad[pidx] * wquad[aidx]
+            
+    #         # rest of the moments
+    #         idx=2
+    #         for i=2:ng
+    #             for j=0:i
+    #                 # need to integrate
+    #                 idx += 1
+    #                 G[idx] += ((pdiff)^(i-j) * (adiff)^(j) - m[idx]) * density * wquad[pidx] * wquad[aidx]
+    #             end
+    #         end
+    #     end
+    # end
+
+    # G .= G .* (pscale * ascale)
+
+    
+    # simpsons quadrature
     # first two moments
     # need to integrate
-    # simpsons quadrature
-
-    G[1] = simps2d((p,a) -> (p - m[1]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
-    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    
+    G[1] = simps2d((p,a) -> (log(p) - m[1]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
 
     # rest of the moments
     idx=2
@@ -568,12 +671,14 @@ function getDensityG!(G, x, m, params)
         for j=0:i
             # need to integrate
             idx += 1
-            G[idx] = simps2d((p,a) -> ((p - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(p, a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+            G[idx] = simps2d((p,a) -> ((log(p) - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
         end
     end
 
 
 end
+
+
 
 #==
 Iterate parametrized distribution by one period using policy rules,
@@ -581,7 +686,7 @@ the distribution parameters and the starting moments
 ==#
 function iterateDist(g0, g, m0, polp, pollamb, params, infl, Zl, Z)
 
-    @unpack np, na, plo, phi, pgrid, agrid, ng, 
+    @unpack np, na, plo, phi, pgrid, pgrid_dense, agrid, ng, 
         nquad, xquad, wquad, ngh, xgh, wgh,
         ρ, σ  = params
     alo = minimum(agrid)
@@ -594,13 +699,9 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Zl, Z)
     m1 = zero(m0)
 
     # interpolate pol
-    itp = interpolate(pgrid[polp], (BSpline(Linear()), BSpline(Linear())))
-    eitp = extrapolate(itp, Line())
-    polp_interp = Interpolations.scale(eitp, pgrid, agrid)
-
-    itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
-    eitp = extrapolate(itp, Line())
-    pollamb_interp = Interpolations.scale(eitp, pgrid, agrid)
+    itp = Interpolations.interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
+    eitp = Interpolations.extrapolate(itp, Line())
+    pollamb_interp = Interpolations.scale(eitp, pgrid_dense, agrid)
 
     for pidx = 1:nquad
         for aidx = 1:nquad
@@ -615,11 +716,11 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl, Zl, Z)
                 a1val = log(Z) + a1val
 
                 # remember a1s realize before next periods p
-                p1val = polp_interp(pval, a1val)
+                polp_interp = BSplineKit.interpolate(agrid, polp, BSplineOrder(4))
+                p1val = polp_interp(a1val)
                 pchange = pollamb_interp(pval, a1val)
 
-                p1val = pchange * p1val + (1.0 - pchange) * pval
-                p1val = p1val / exp(infl)
+                p1val = pchange * p1val + (1.0 - pchange) * pval / (1.0 + infl)
 
                 density = getDensity(pval, aval, m0, g, g0, params) * wquad[pidx] * wquad[aidx] * wgh[epsidx]
 
@@ -648,20 +749,20 @@ end
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
-    @unpack ng, pgrid, agrid, nparams, dampening = params
+    @unpack ng, pgrid, pgrid_dense, agrid, nparams, dampening = params
 
     tol_hist = tol * 1e3
     # == initial histogram approach to get decent starting moments == #
-    omega1 = ones(params.np, params.na);
-    omega1 = omega1 ./ (params.np*params.na);
-    omega1hat = zeros(params.np, params.na);
+    omega1 = ones(params.npdense, params.na);
+    omega1 = omega1 ./ (params.npdense*params.na);
+    omega1hat = zeros(params.npdense, params.na);
     error = 10;
     iter = 0;
     
     while (error > tol_hist) && (iter < maxiter)
 
         omega0 = omega1
-        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.np, params.Π_star, 1.0)
+        omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.Π_star, 1.0)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
         omega0hat = omega1hat;
@@ -681,7 +782,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     m0 = zeros(nparams)
     pdist = sum(omega1, dims=2)
     adist = sum(omega1, dims=1)
-    m0[1] = sum(pdist .* pgrid)
+    m0[1] = sum(pdist .* pgrid_dense)
     m0[2] = sum(adist .* agrid)
 
 
@@ -719,9 +820,14 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
             x -> objectiveDensity(x, m0, p),
             (G,x) -> getDensityG!(G, x, m0, p),
             gprev,
-            AdaMax(),
-            Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=1_000_000)
+            LBFGS(),
+            Optim.Options(g_tol=1e-5, iterations=1_000_000)
         )
+        # result = optimize(
+        #     x -> objectiveDensity(x, m0, p),
+        #     gprev,
+        #     Optim.Options(g_tol=1e-5, iterations=1_000_000)
+        # )
         gest = Optim.minimizer(result)
         densityOut = Optim.minimum(result)
         if Optim.converged(result) == false
@@ -753,16 +859,16 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         x -> objectiveDensity(x, m0, p),
         (G,x) -> getDensityG!(G, x, m0, p),
         gprev,
-        AdaMax(),
-        Optim.Options(x_tol=1e-3, f_tol=1e-3, g_tol=1e-3, iterations=1_000_000)
+        LBFGS(),
+        Optim.Options(g_tol=1e-5, iterations=1_000_000)
     )
     gest = Optim.minimizer(result)
-    H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
-    evals = eigvals(H)
-    conditionnumber = maximum(evals) / minimum(evals)
-    if abs(conditionnumber) > 1.0
-        @warn "Condition number is large, parametric distribuiton estimates is probably not well defined"
-    end
+    # H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
+    # evals = eigvals(H)
+    # conditionnumber = maximum(evals) / minimum(evals)
+    # if abs(conditionnumber) > 1.0
+    #     @warn "Condition number is large, parametric distribuiton estimates is probably not well defined"
+    # end
     densityOut = Optim.minimum(result)
     g0 = 1.0 / densityOut
 
@@ -772,12 +878,10 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
 end
 
 #==
-Find equilibiurm Y and w to clear steady state
+x = [w , y]
 ==#
-function findEquilibrium_ss(p; winit=1, tol=1e-3, max_iter=200, deltaw=0.05,
-                            Yinit=1, deltaY=0.05,
-                            printinterval=10)
-    
+function equilibriumResidual(x, p)
+
     @unpack np, na, plo, phi, pgrid, agrid, ng, 
         nquad, xquad, wquad, ngh, xgh, wgh, ρ, σ, nparams = p
     
@@ -788,101 +892,68 @@ function findEquilibrium_ss(p; winit=1, tol=1e-3, max_iter=200, deltaw=0.05,
     pscale = (phi - plo)/2.0
     ascale = (ahi - alo)/2.0
 
+    w = x[1]
+    Y = x[2]
 
-    # gettngg value funcion
-    w0 = winit;
-    Y0 = Yinit
-    iter = 0;
-    error = 10
+    agg = (w=w, Y=Y, A=0.0);
+    v1, Vadjust, Vnoadjust, polp, pollamb, _, _  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
+    pollamb_dense = makedense(Vadjust, Vnoadjust, p, agg)
 
-    # preallocating
-    Vadjust = zeros(p.np, p.na)
-    Vnoadjust = zeros(p.np, p.na)
-    polp = zeros(p.np, p.na)
-    pollamb = zeros(p.np, p.na)
-    moments = zeros(nparams)
-    g = zeros(nparams)
-    g0 = 0.0
-    C = 0.0
+    # get joint distribution of prices and shocks
+    moments, g0, g = genJointDist(polp, pollamb_dense, p; printinfo=false);
 
-    # outer labour market loop
-    while iter < max_iter && error > tol
 
-        agg = (w=w0, Y=Y0);
-        V, Vadjust ,Vnoadjust, polp, pollamb  = viterFirm(agg, p; maxiter=10000, tol=1e-6, printinfo=false)
-
-        # get joint distribution of prices and shocks
-        moments, g0, g = genJointDist(polp, pollamb, p; printinfo=false);
-
-        # get implied aggregate Y
-        Yimplied = 0.0
-        for pidx in 1:nquad
-            for aidx in 1:nquad
-                pval = pgrid_quad[pidx]
-                aval = agrid_quad[aidx]
-                density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
-                Yimplied += pval ^ (-p.ϵ) * density
-            end
+    # get implied aggregate Y
+    aggp = 0.0
+    for pidx in 1:nquad
+        for aidx in 1:nquad
+            pval = pgrid_quad[pidx]
+            aval = agrid_quad[aidx]
+            density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
+            aggp += pval ^ (1.0-p.ϵ) * density
         end
-        Yimplied *= pscale * ascale
-
-        # get profits to give HH
-        # get aggregate fixed cost payments
-        # get labour demand
-        # integrate
-        # interpolate pol
-        itp = interpolate(pgrid[polp], (BSpline(Linear()), BSpline(Linear())))
-        eitp = extrapolate(itp, Line())
-        polp_interp = Interpolations.scale(eitp, pgrid, agrid)
-
-        itp = interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
-        eitp = extrapolate(itp, Line())
-        pollamb_interp = Interpolations.scale(eitp, pgrid, agrid)
-        Ld = 0.0
-        F = 0.0
-        for pidx = 1:nquad
-            for aidx = 1:nquad
-                pval = pgrid_quad[pidx]
-                aval = agrid_quad[aidx]
-                density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
-                Ld += pval^(-p.ϵ) * exp(-aval) * Y0 * density
-
-                # F is done after realizing shocks
-                for epsidx = 1:ngh
-                    epsval = xgh[epsidx]
-                    a1val = ρ*aval + σ*epsval
-                    F += p.κ * pollamb_interp(pval, a1val)*density*wgh[epsidx] # who adjusts in a period
-                end
-            end
-        end
-        F *= pscale * ascale
-        Ld *= pscale * ascale
-
-        C = Yimplied - F
-        w_implied = p.ζ * Ld^(1/p.ν) * C
-
-        # updating guesses
-        errorY = abs(Yimplied - Y0)
-        errorw = abs(w0 - w_implied)
-        error = max(errorY, errorw)
-        # error = errorY
-
-        Y1 = (1-deltaY) * Y0 + deltaY * Yimplied;
-        w1 = (1-deltaw) * w0 + deltaw * w_implied;
-        Y0 = Y1
-        w0 = w1
-
-        iter += 1
-
-        if iter == 1 || mod(iter, printinterval) == 0
-            println("Iterations: $iter")
-            println("Error w: $errorw, W guess: $w0")
-            println("Error Y: $errorY, Y guess: $Y0")
-        end
-
     end
+    aggp *= pscale * ascale
+    aggp = aggp^(1.0/(1.0-p.ϵ))
 
-    return w0, Y0, Vadjust, Vnoadjust, polp, pollamb,  moments, g, g0, C, iter, error
+    # inteprolate price change function
+    itp = Interpolations.interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
+    eitp = Interpolations.extrapolate(itp, Line())
+    pollamb_interp = Interpolations.scale(eitp, pgrid, agrid)
+    # get profits to give HH
+    # get aggregate fixed cost payments
+    # get labour demand
+    # integrate
+    Ld = 0.0
+    F = 0.0
+    for pidx = 1:p.nquad
+        for aidx = 1:p.nquad
+            pval = pgrid_quad[pidx]
+            aval = agrid_quad[aidx]
+            density = getDensity(pval, aval, moments, g, g0, p) * wquad[pidx] * wquad[aidx]
+            Ld += pval^(-p.ϵ) * exp(-aval) * Y * density
+
+            # F is done after realizing shocks
+            for epsidx = 1:ngh
+                epsval = xgh[epsidx]
+                a1val = ρ*aval + σ*epsval
+                F += p.κ * pollamb_interp(pval, a1val) * density * wgh[epsidx] # who adjusts in a period
+            end
+
+        end
+    end
+    F *= pscale * ascale
+    Ld *= pscale * ascale
+
+    C = Y - F
+    w_implied = p.ζ * Ld^(1/p.ν) * C
+
+    # sum of squared errors
+    errorY = (aggp - 1.0)^2.0
+    errorw = (w - w_implied)^2.0
+    error = errorY + errorw
+    return error, w, Y, Vadjust, Vnoadjust, polp, pollamb, g, g0, moments, C
+
 end
 
 # Solving using Reiter 2009

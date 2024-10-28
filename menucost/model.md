@@ -119,13 +119,15 @@ $$
 
 # Equilibrium
 
+I denote the aggregate state $S_t = (A_t, Y_t, r_t)$ as a tuple for convenience where required to be explicit.
+
 The recursive equilibrium is a set of functions $\{V^{A}, V^{NA}, p', \chi, C, Y,w, r, L, \pi, \Omega, \hat{\Omega}, Z\}$ satisfying the equations
 
 \begin{align}
-V^{NA}_{t-1}(p_i, a_i) &= \Pi(\frac{p_i}{1+\pi_{t-1}}, a_i) + \mathbb{E}_{t-1} \Theta_{t-1,t} V_{t}(\frac{p_i}{1+\pi_{t-1}}, a'_i) \\
-V^{A}_{t-1}(a_i) &= \Pi(p'_{t-1}(a_i), a_i) - \kappa + \mathbb{E}_{t-1} \Theta_{t-1,t} V_{t}(p'_{t-1}(a_i), a'_i) \\
-p'_{t-1}(a_i) &= \arg \max_p \Pi(p, a_i) + \mathbb{E}_{t-1} \Theta_{t-1,t} V_{t}(p, a'_i) \\
-\chi_{t-1}(p_i, a_i) &= \textbf{1} \{V^A_{t-1}(a_i) > V^{NA}_{t-1}(p_i, a_i) \} \\
+V^{NA}(p_i, a_i; S_{t-1}) &= \Pi(\frac{p_i}{1+\pi_{t-1}}, a_i) + \mathbb{E}_{t-1} \Theta_{t-1,t} V(\frac{p_i}{1+\pi_{t-1}}, a'_i; S_t) \\
+V^{A}(a_i; S_{t-1}) &= \Pi(p'_{t-1}(a_i), a_i) - \kappa + \mathbb{E}_{t-1} \Theta_{t-1,t} V(p'_{t-1}(a_i), a'_i; S_t) \\
+p'(a_i; S_{t-1}) &= \arg \max_p \Pi(p, a_i) + \mathbb{E}_{t-1} \Theta_{t-1,t} V(p, a'_i; S_t) \\
+\chi(p_i, a_i; S_{t}) &= \textbf{1} \{V^A(a_i; S_t) > V^{NA}(p_i, a_i; S_t) \} \\
 \hat{\Omega}_t(p_i, a'_i) &= \int \Omega_{t-1}(p_i, a_i) \Gamma(a'_i | a_i) d a_i \\
 \Omega_t(p'_i, a_i) &= \int \chi(p_i, a_i) \textbf{1}\{p'(p_i, a_i) = p'_i \} \notag \\
 &+ (1 - \chi(p_i, a_i)) \textbf{1}\{\frac{p_i}{1 + \pi_t} = p'_i\} \hat{\Omega}_t(p_i, a_i)dp_i \\

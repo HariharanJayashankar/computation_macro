@@ -58,10 +58,11 @@ for i = 2:nMeasure		%	higher-order moments
 end
 
 % Compute parameters by minimizing integral equation
-options 								= optimoptions(@fminunc,'Algorithm','quasi-newton','Display','notify-detailed',...
+options 								= optimoptions(@fminunc,'Algorithm','quasi-newton','Display','iter-detailed',...
 											'MaxFunEvals',50000,'TolFun',1e-12,'GradObj','on','MaxIter',1000);
 objectiveFunction 				= @(vParametersTilde) parametersResidual(vParametersTilde,mGridMoments);
-[vParameters,normalization] = fminunc(objectiveFunction,zeros(nMeasureCoefficients,1),options);
+[vParameters,normalization,exitflag,output,grad,hessian] = fminunc(objectiveFunction,zeros(nMeasureCoefficients,1),options);
+cond(hessian) % big numbers here! Doesn't seem to matter
 %[vParameters,normalization] = fminunc(objectiveFunction,-1e-2*ones(nMeasureCoefficients,1),options);  % if optimizer is not converging or has problems with that initial guess, try this initial guess
 vParameters 						= [1 / normalization; vParameters];
 
@@ -89,3 +90,7 @@ if exitflag < 1
 end	
 
 fprintf('Done! Time to compute: %2.2f seconds \n\n',toc(t0))
+
+% ===== can the method recover a given set of moments ===== %
+
+

@@ -39,7 +39,6 @@ paramgen = @with_kw (
     w_flex = flexsoln[3],
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
-    pss = log.(pflex),
     plo = 0.8*pflex,
     phi = 1.4*pflex,
     pgrid = range(plo, phi, length=np),
