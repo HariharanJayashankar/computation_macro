@@ -11,7 +11,7 @@ include("menucost_funcs.jl")
 include("gensysdt.jl")
 
 
-params = @with_kw (
+param_gen = @with_kw (
     β = 0.97^(1/12),
     ζ = 1.0,
     ν = 1.0,
@@ -24,13 +24,14 @@ params = @with_kw (
     ϕ_infl = 1.2, # talor rule infl
     ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
-    m =  3, # tauchen grid distance
-    na = 10, #number of grids in shock
+    m =  2, # tauchen grid distance
+    na = 5, #number of grids in shock
     np = 20, # number of price grids
     npdense = 50, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
-    shock = tauchen(na, ρ, σ, 0.0, m),
+    # shock = tauchen(na, ρ, σ, 0.0, m),
+    shock = rouwenhorst(na, ρ, σ, 0.0),
     aP = shock.p,
     aPstationary = findStationary(aP),
     agrid = shock.state_values,
@@ -41,93 +42,33 @@ params = @with_kw (
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
     plo = 0.1*pflex,
-    phi = 2.5*pflex,
-    pgrid = range(plo, phi, length=np),
-    pgrid_dense = range(plo, phi, length=npdense),
+    phi = 5.0*pflex,
+    pgrid = exp.(range(log(plo), log(phi), length=np)),
+    pgrid_dense = exp.(range(log(plo), log(phi), length=npdense)),
     ρ_agg = 0.9,
     ng = 5,
-    nparams = ng > 1 ? 2 + sum([(i+1 for i=2:ng)...]) : 2,
-    nquad = 10,
-    ngh=3,
     # quadrature stuff for winberry
-    quadrature_out = gausslegendre(nquad),
-    xquad = quadrature_out[1],
-    wquad = quadrature_out[2],
-    # for shocks
-    gh_quad_out = gausshermite(ngh; normalize=true),
-    xgh = gh_quad_out[1],
-    wgh = gh_quad_out[2],
-    dampening = 0.01,
+    dampening = 0.1,
     nsimp = 10
 )
-p = params(ng=2)
+p = param_gen(ng=2)
 
-## Testing
-# does simpson2d work well
-# https://d-arora.github.io/Doing-Physics-With-Matlab/mpDocs/math_integration_2D.pdf
-# should be 416
-f(x,y) = x^2 * y^3
-simps2d((x,y) -> f(x,y), 0.0, 2.0, 1.0, 5.0, 6, 6)
+## does iterateDist work fine?
 
-# using  gl quadruatrue method
-xgrid_quad = scaleUp(p.xquad, 0.0, 2.0)
-xscale = (2.0 - 0.0)/2.0
-ygrid_quad = scaleUp(p.xquad, 1.0, 5.0)
-yscale = (5.0 - 1.0)/2.0
-fout = 0.0
-for xidx = 1:p.nquad
-    for yidx = 1:p.nquad
-        xval = xgrid_quad[xidx]
-        yval = ygrid_quad[yidx]
-        fout += f(xval, yval) * p.wquad[xidx] * p.wquad[yidx]
-    end
-end
+agg = (w=1.0, Y=1.0, A=0.0);
+v1, Vadjust, Vnoadjust, polp, pollamb, iter, err  = viterFirm(agg, p; maxiter=10000, tol=1e-6)
 
-fout *= xscale * yscale
-@show fout
-# this works!
-# simp2d and the gauss legendre quad work.
+pollamb_dense = makedense(Vadjust, Vnoadjust, p, agg)
+
+# get joint distribution of prices and shocks
+moments, g0, g = genJointDist(polp, pollamb_dense, p; printinfo=false);
 
 
-
-## Does my gradient accruately give the correct value
-m0 = rand(p.nparams)
-m0 = m0 / 100
-m0[1] = log(p.phi) / 4.0
-
-gprev = ones(p.nparams) * 0.02
-objval = objectiveDensity(gprev, m0, p)
-G_fwd = ForwardDiff.gradient(g -> objectiveDensity(g, m0, p), gprev)
-
-G_manual = zeros(p.nparams)
-getDensityG!(G_manual, gprev, m0, p)
-maximum(abs.(G_fwd - G_manual))
-# perfect with simpson quad
-
-## Does my integration method integrate over pdfs well?
-
-Random.seed!(123)
-d = MvNormal([0.0, 0.0], I)
-pdf(d, [0.5, 0.5])
-integral = simps2d((x,y) -> pdf(d, [x,y]), -3.0, 3.0, -3.0, 3.0, p.nsimp, p.nsimp)
-# not far off from 1
-
-## Testing dist parametrization
-
-
-# winberry moments for ng = 2
-m0 = [
-    1.7014
-    0.0000
-    0.0009
-    0.0053
-    0.0508]
-# m0 = rand(p.nparams)
-# m0 = m0 / 100
-# m0[1] = log(p.phi) / 4.0
-# gprev = ones(p.nparams) * 10.0
-# gprev = rand(p.nparams) * -10.0
-gprev = zeros(p.nparams)
+## Testing parametrization
+m0 = rand(p.ng)
+m0[1] = 0.12
+# m0[2] = 0.0005
+gprev = zeros(p.ng)
 
 result = optimize(
     x -> objectiveDensity(x, m0, p),
@@ -136,41 +77,13 @@ result = optimize(
     LBFGS(),
     Optim.Options(iterations=1_000_000, show_trace=true)
 )
-# result = optimize(
-#     TwiceDifferentiable(x -> objectiveDensity(x, m0, p), gprev, autodiff=:forward),
-#     gprev,
-#     Newton(),
-#     Optim.Options(iterations=1_000_000, show_trace=true)
-# )
 gest = Optim.minimizer(result)
 densityOut = Optim.minimum(result)
 H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
 evals = eigvals(H)
 conditionnumber = maximum(evals) / minimum(evals)
-# problem is that the minimum is exactly at func value 0
-# so cant really normalize
-# IMplies something is wrong with the method
-# dumb fix - putting a high tol on the minimzer stops it from being too bad
 
-## reconstructing moments using the parameters
-pmean = 0.0
-amean = 0.0
-pgrid_quad = scaleUp(p.xquad, p.plo, p.phi)
-agrid_quad = scaleUp(p.xquad, minimum(p.agrid), maximum(p.agrid))
-pscale = (p.phi - p.plo)/2.0
-ascale = (minimum(p.agrid) - maximum(p.agrid))/2.0
-for pidx=1:p.nquad
-    for aidx=1:p.nquad
-        pval = pgrid_quad[pidx]
-        aval = agrid_quad[aidx]
-        pmean += log(pval) * getDensity(log(pval), aval, m0, gest, 1.0/densityOut, p) * p.wquad[pidx] * p.wquad[aidx]
-        amean += aval * getDensity(log(pval), aval, m0, gest, 1.0/densityOut, p) * p.wquad[pidx] * p.wquad[aidx]
-    end
-end
 
-pmean += pscale * ascale
-amean += pscale * ascale
-# not even close
 
 
 ## Main run

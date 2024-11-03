@@ -57,78 +57,45 @@ params = @with_kw (
 )
 p = params()
 
+## Does my gradient accruately give the correct value
+m0 = rand(p.ng)
+m0 = m0 / 100
+m0[1] = log(p.phi) / 4.0
 
-# manually testing winbrry
-# m0 = ones(p.nparams)
-# gprev = -0.02 * ones(p.nparams)
-# gprev = zeros(2 + (p.ng-1)*(p.ng + 1))
-m0 = rand(p.nparams)
-gprev = -1e-2 * ones(p.nparams)
-objectiveDensity(gprev, m0, p)
+gprev = ones(p.ng) * 0.02
+objval = objectiveDensity(gprev, m0, p)
+G_fwd = ForwardDiff.gradient(g -> objectiveDensity(g, m0, p), gprev)
 
-# is my gradient correct?
-using ForwardDiff
-fwd = ForwardDiff.gradient(x -> objectiveDensity(x, m0, p), gprev)
-G = zero(m0)
-getDensityG!(G, gprev, m0, p)
+G_manual = zeros(p.ng)
+getDensityG!(G_manual, gprev, m0, p)
+maximum(abs.(G_fwd - G_manual))
+# perfect with simpson quad
 
-maximum(abs.(G - fwd))
-# seems right
-
-# does my integration look righT?
-#test for int_-2^2 x^2 dx = 16/3
-xlo = -2.0
-xhi = 2.0
-xgrid_scaled = scaleUp(p.xquad, xlo, xhi)
-scaling_factor = (xhi - xlo)/2.0
-f(x) = x.^2
-(p.wquad ⋅ f.(xgrid_scaled)) * scaling_factor
-16/3
-# my understandding seems right!
+## Testing dist parametrization
 
 
+# winberry moments for ng = 2
+m0 = rand(p.ng)
+m0[1] = log(p.phi) / 4.0
+gprev = zeros(p.ng)
 
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    Optim.Options(x_tol=1e-8, f_tol=1e-8, g_tol=1e-8, iterations=100_000)
- )
-result = optimize(
-    x -> objectiveDensity(x, m0, p),
-    gprev,
-    LBFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
-)
-Optim.minimizer(result)
 result = optimize(
     x -> objectiveDensity(x, m0, p),
     (G,x) -> getDensityG!(G, x, m0, p),
     gprev,
-    BFGS(),
-    Optim.Options(x_tol=1e-6, f_tol=1e-6, g_tol=1e-6, iterations=100_000, show_trace=true)
+    LBFGS(),
+    Optim.Options(iterations=1_000_000, show_trace=true)
 )
-@show Optim.converged(result)
 gest = Optim.minimizer(result)
 densityOut = Optim.minimum(result)
-# g0 = 1.0 / densityOut
-g0 = 1.0
+H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
+evals = eigvals(H)
+conditionnumber = maximum(evals) / minimum(evals)
 
-# see if this density gives back similar moments
-alo = minimum(p.agrid)
-ahi = maximum(p.agrid)
-pgrid_quad = scaleUp(p.xquad, p.plo, p.phi)
-agrid_quad = scaleUp(p.xquad, alo, ahi)
-meanp = 0.0
-meana = 0.0
-for pidx = 1:p.nquad
-    for aidx = 1:p.nquad
-        pval = pgrid_quad[pidx]
-        aval = agrid_quad[aidx]
 
-        density = getDensity(pval, aval, m0, gest, g0, p) * p.wquad[pidx] * p.wquad[aidx]
-        meanp += density * pval
-        meana += density * aval
-    end
-end
-@show abs(meanp - m0[1])
-@show abs(meana - m0[2])
+## reconstructing moments using the parameters
+
+pmean = simps(x -> log(x) * getDensity(x, m0, gest, 1.0/densityOut, p), p.plo, p.phi, p.nsimp)
+# exactly!
+
+

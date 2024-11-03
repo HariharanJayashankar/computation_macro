@@ -1,4 +1,4 @@
-
+## Setup
 using MKL
 using Plots
 using JLD2
@@ -49,6 +49,7 @@ paramgen = @with_kw (
 )
 params = paramgen()
 
+## Testing
 # manally testing viter
 @time viterFirm((w=1.0, Y=1.0, A=0.0), params, howarditer=50)
 v1, Vadjust1, Vnoadjust1, polp, pollamb, iter, error = viterFirm((w=1.0, Y=1.0, A=0.0), params, howarditer=50)
@@ -68,6 +69,8 @@ omegass, omegahatss = genJointDist(polp, pollamb_dense, params)
 pdist = sum(omegass, dims=2)
 plot(pdist)
 
+## SS Equilibrium
+
 ssresult = optimize(
     x -> equilibriumResidual(x, params)[1],
     [1.0, 1.0],
@@ -81,6 +84,7 @@ error, w, Y, Vadjust, Vnoadjust, polp, pollamb, omega, omegahat, C = equilibrium
     [w, Y], params
 )
 
+## Linearizing and reiter
 sizedist = params.npdense * params.na
 sizev = params.np * params.na
 xss = [

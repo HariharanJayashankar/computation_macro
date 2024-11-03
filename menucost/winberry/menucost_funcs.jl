@@ -7,61 +7,17 @@ using Optim
 using FastGaussQuadrature
 using BSplineKit
 
-#==
- This function maps z in [-1,1] into x in [xmin,xmax]; inverse of scale_down
- 
- Inputs
-   (1) z: array with elements in [-1,1]; if outside range, will force
-   (2) xmin: scalar lower bound of range
-   (3) xmax: scalar upper bound of range
-
- Outputs
-   (1) x: array with elements in [xmin,xmax]
- 
- Thomas Winberry, February 14th, 2018
-==#
-function scaleUp(z,xmin,xmax)
-
-    # x = min(max((.5 .* (z .+ 1.0) .* (xmax - xmin)) .+ xmin,xmin .* ones(size(z))), 
-    #     xmax .* ones(size(z)))
-
-    x = (xmax - xmin) .* z .+ xmin .+ xmax
-    x = x/2.0
-    return x
+function findnearest(a,x)
+       length(a) > 0 || return 0:-1
+       r = searchsorted(a,x)
+       length(r) > 0 && return r
+       last(r) < 1 && return searchsorted(a,a[first(r)])
+       first(r) > length(a) && return searchsorted(a,a[last(r)])
+       x-a[last(r)] < a[first(r)]-x && return searchsorted(a,a[last(r)])
+       x-a[last(r)] > a[first(r)]-x && return searchsorted(a,a[first(r)])
+       return first(searchsorted(a,a[last(r)])):last(searchsorted(a,a[first(r)]))
 end
 
-#==
-This function maps x in [xmin,xmax] into z in [-1,1]; inverse of scale_up
-
-Inputs
-  (1) x: array with elements in [xmin,xmax]; if outside range, will force
-  (2) xmin: scalar lower bound of domain 
-  (3) xmax: scalar upper bound of domain
-
-Outputs
-  (1) z: array with elements in [-1,1]
-
-Thomas Winberry, Feburary 14th, 2018
-==#
-function scaleDown(x,xmin,xmax)
-
-    # z = min(max(2.0 .* ((x .- xmin) / (xmax - xmin)) .- 1.0,-1.0 .* ones(size(x))),ones(size(x)));
-
-    return z
-end
-
-#==
-Simpsons integration rule operator
-Given a function f, and end points a and b
-This computes
-int_a^b
-Taken from https://discourse.julialang.org/t/simpsons-rule/84114/2
-First function takes a vector 
-Second takes a fcuntion and creates the vector and passes
-it to the first function.
-
-Q: what does @views do here?
-==#
 @views function simps(f::Function, x::AbstractVector)
     n = length(x) - 1
     h = (x[end]-x[begin])/n
@@ -544,21 +500,17 @@ get the density for (a, p)
 m and g are matrices of size (ng, ng), where
 ng is the level of approximation
 ==#
-function getDensity(p, a, m, g, g0, params)
+function getDensity(p, m, g, g0, params)
 
     @unpack ng = params
 
     # first moments
-    gout = g[1] * (p - m[1]) + g[2] * (a - m[2])
+    gout = g[1] * (p - m[1])
 
     # rest of the moments
-    idx=2
     for i=2:ng
-        for j=0:i
-            idx += 1
-            inner = (p - m[1])^(i-j) * (a - m[2])^j - m[idx]
-            gout += g[idx] * inner
-        end
+        inner = (p - m[1])^(i) - m[i]
+        gout += g[i] * inner
     end
 
     gout = g0 * exp(gout)
@@ -584,29 +536,10 @@ The amtrix will be
 ==#
 function objectiveDensity(g, m, params)
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad, nsimp = params
-
-    alo = minimum(agrid)
-    ahi = maximum(agrid)
-    pgrid_quad = scaleUp(xquad, plo, phi)
-    agrid_quad = scaleUp(xquad, alo, ahi)
-    pscale = (phi - plo)/2.0
-    ascale = (ahi - alo)/2.0
-
-
-    # gauss legendre quadrature
-    # integral = 0.0
-    # for pidx = 1:nquad
-    #     for aidx = 1:nquad
-    #         pval = pgrid_quad[pidx]
-    #         aval = agrid_quad[aidx]
-    #         integral += getDensity(log(pval), aval, m, g, 1.0, params) * wquad[pidx] * wquad[aidx]
-    #     end
-    # end
-    # integral *= pscale * ascale
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp = params
 
     # simpsons quadrature
-    integral = simps2d((p,a) -> getDensity(log(p), a, m, g, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    integral = simps(p -> getDensity(p, m, g, 1.0, params), plo, phi, nsimp)
 
     return integral
 
@@ -618,63 +551,21 @@ Get density gradient to help with optimizer
 function getDensityG!(G, x, m, params)
 
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nquad, xquad, wquad, nsimp = params
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp = params
 
-    alo = minimum(agrid)
-    ahi = maximum(agrid)
-    pgrid_quad = scaleUp(xquad, plo, phi)
-    agrid_quad = scaleUp(xquad, alo, ahi)
-    pscale = (phi - plo)/2.0
-    ascale = (ahi - alo)/2.0
-
-    # gauss legendre quadrature
-    # first two moments
-    
-
-    # G[:] .= 0.0
-    # for pidx = 1:nquad
-    #     for aidx = 1:nquad
-    #         pval = pgrid_quad[pidx]
-    #         aval = agrid_quad[aidx]
-    #         pdiff = log(pval) - m[1]
-    #         adiff = aval - m[2]
-    #         density = getDensity(log(pval), aval, m, x, 1.0, params) * wquad[pidx] * wquad[aidx]
-
-    #         G[1] += (pdiff) * density * wquad[pidx] * wquad[aidx]
-    #         G[2] += (adiff) * density * wquad[pidx] * wquad[aidx]
-            
-    #         # rest of the moments
-    #         idx=2
-    #         for i=2:ng
-    #             for j=0:i
-    #                 # need to integrate
-    #                 idx += 1
-    #                 G[idx] += ((pdiff)^(i-j) * (adiff)^(j) - m[idx]) * density * wquad[pidx] * wquad[aidx]
-    #             end
-    #         end
-    #     end
-    # end
-
-    # G .= G .* (pscale * ascale)
 
     
     # simpsons quadrature
     # first two moments
     # need to integrate
     
-    G[1] = simps2d((p,a) -> (log(p) - m[1]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
-    G[2] = simps2d((p,a) -> (a - m[2]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
+    G[1] = simps(p -> (p - m[1]) * getDensity(p, m, x, 1.0, params), plo, phi, nsimp)
 
     # rest of the moments
-    idx=2
     for i=2:ng
-        for j=0:i
-            # need to integrate
-            idx += 1
-            G[idx] = simps2d((p,a) -> ((log(p) - m[1])^(i-j)*(a - m[2])^j - m[idx]) * getDensity(log(p), a, m, x, 1.0, params), plo, phi, alo, ahi, nsimp, nsimp)
-        end
+        # need to integrate
+        G[i] = simps(p -> ((p - m[1])^i - m[i]) * getDensity(p, m, x, 1.0, params), plo, phi, nsimp)
     end
-
 
 end
 
@@ -684,74 +575,74 @@ end
 Iterate parametrized distribution by one period using policy rules,
 the distribution parameters and the starting moments
 ==#
-function iterateDist(g0, g, m0, polp, pollamb, params, infl, Zl, Z)
+function iterateDist(g0, g, m0, polp, pollamb, params, infl)
 
     @unpack np, na, plo, phi, pgrid, pgrid_dense, agrid, ng, 
-        nquad, xquad, wquad, ngh, xgh, wgh,
-        ρ, σ  = params
-    alo = minimum(agrid)
-    ahi = maximum(agrid)
-    pgrid_quad = scaleUp(xquad, plo, phi)
-    pscale = (phi - plo)/2.0
-    agrid_quad = scaleUp(xquad, alo, ahi)
-    ascale = (phi - plo)/2.0
+        aP, ρ, σ, nsimp  = params
 
     m1 = zero(m0)
 
-    # interpolate pol
-    itp = Interpolations.interpolate(pollamb, (BSpline(Constant()), BSpline(Constant())))
-    eitp = Interpolations.extrapolate(itp, Line())
-    pollamb_interp = Interpolations.scale(eitp, pgrid_dense, agrid)
-
-    for pidx = 1:nquad
-        for aidx = 1:nquad
-
-            pval = pgrid_quad[pidx]
-            aval = agrid_quad[aidx]
-
-            # iterate over next a
-            for epsidx = 1:ngh
-                epsval = xgh[epsidx]
-                a1val = ρ*aval + σ*epsval
-                a1val = log(Z) + a1val
-
-                # remember a1s realize before next periods p
-                polp_interp = BSplineKit.interpolate(agrid, polp, BSplineOrder(4))
-                p1val = polp_interp(a1val)
-                pchange = pollamb_interp(pval, a1val)
-
-                p1val = pchange * p1val + (1.0 - pchange) * pval / (1.0 + infl)
-
-                density = getDensity(pval, aval, m0, g, g0, params) * wquad[pidx] * wquad[aidx] * wgh[epsidx]
-
-                m1[1] += density * p1val
-                m1[2] += density * a1val
-
-                # higher moments
-                idx = 2
-                for i=2:ng
-                    for j=0:i
-                        idx += 1
-                        m1[idx] = ((p1val - m1[1])^(i-j)) * ((a1val - m1[2])^j) * density
-                    end
-                end
+    polp_f = BSplineKit.interpolate(agrid, polp, BSplineOrder(4))
+    polp_f = BSplineKit.extrapolate(polp_f, Smooth())
 
 
+    # for each moment
+    # first moment
+    for a1idx = 1:na
+        function inner_integral(pval)
+            mout = 0.0
+            for aidx = 1:na
+
+                aval = agrid[aidx]
+                densityP = getDensity(pval, m0[:, aidx], g[:, aidx], g0[aidx], params)
+
+                pval_nearest = findnearest(pgrid_dense, pval)
+                pchange = pollamb[pval_nearest][1]
+                density = densityP * aP[aidx, a1idx]
+
+                p1val = pchange * polp_f(aval) + (1.0 - pchange) * pval/(1.0 + infl)
+
+                mout += p1val * density * p1val
             end
+            return mout
+        end
+
+        m1[1, a1idx] = simps(inner_integral, plo, phi, nsimp)
+
+        # for higher moments
+        for j = 2:ng
+            function inner_integral(pval,j)
+                mout = 0.0
+                for aidx = 1:na
+
+                    densityP = getDensity(pval, m0[:, aidx], g[:, aidx], g0[aidx], params)
+                    aval = agrid[aidx]
+                    pval_nearest = findnearest(pgrid_dense, pval)
+                    pchange = pollamb[pval_nearest][1]
+
+                    density = densityP * aP[aidx, a1idx]
+
+                    p1val = pchange * polp_f(aval) + (1.0 - pchange) * pval/(1.0 + infl)
+
+                    mout += ((p1val - m1[1,a1idx])^j) * density * p1val
+
+                end
+                return mout
+            end
+            m1[j, a1idx] = simps(p -> inner_integral(p, j), plo, phi, nsimp)
+
         end
     end
 
-    m1 *= pscale * ascale
     return m1
-
 end
 
 
 function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterval=100, printinfo=true)
 
-    @unpack ng, pgrid, pgrid_dense, agrid, nparams, dampening = params
+    @unpack na, ng, pgrid, pgrid_dense, agrid, dampening = params
 
-    tol_hist = tol * 1e3
+    tol_hist = tol
     # == initial histogram approach to get decent starting moments == #
     omega1 = ones(params.npdense, params.na);
     omega1 = omega1 ./ (params.npdense*params.na);
@@ -765,7 +656,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.Π_star, 1.0)
         error = maximum(abs.(omega1 - omega0))
         iter += 1;
-        omega0hat = omega1hat;
+        omega0 = omega1;
 
         if ((iter==1) || (mod(iter, printinterval) == 0)) & printinfo
             println("Histogram iterations: $iter, Error $error")
@@ -779,69 +670,63 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
 
     # == Winberry == #
     # calculate moments from histogram
-    m0 = zeros(nparams)
-    pdist = sum(omega1, dims=2)
-    adist = sum(omega1, dims=1)
-    m0[1] = sum(pdist .* pgrid_dense)
-    m0[2] = sum(adist .* agrid)
+    # m0 is a set of conditional moments conditional on each aidx
+    m0 = zeros(ng, na)
+    for aidx = 1:na
+        pdist = omega1[:, aidx]
+        m0[1, aidx] = sum(pdist .* pgrid_dense)
 
-
-    idx = 2
-
-    for i=2:ng
-        for j=0:i
+        for i=2:ng
             inner = 0.0
 
             for pidx = 1:params.np
-                for aidx = 1:params.na
-                    pval = pgrid[pidx]
-                    aval = agrid[aidx]
-                    inner += (pval - m0[1])^(i-j) * (aval - m0[2])^j * omega1[pidx, aidx]
-                end
+                pval = pgrid[pidx]
+                inner += (pval - m0[1, aidx])^(i) * pdist[pidx]
             end
 
-            idx += 1
-            m0[idx] = inner
+            m0[i, aidx] = inner
         end
-    end
 
+    end
 
     # == iterate to steady state == #
     error = 10;
     iter = 0;
+    m0 = ones(ng, na) * p.pflex
 
     # some initial guesses for g
-    gprev = 0.2 * ones(nparams)
-
+    # gprev = zeros(ng, na)
+    gprev=  ones(ng, na) * -1e-2
+    g0 = zeros(na)
     while (error > tol) && (iter < maxiter)
 
         # find parameters
-        result = optimize(
-            x -> objectiveDensity(x, m0, p),
-            (G,x) -> getDensityG!(G, x, m0, p),
-            gprev,
-            LBFGS(),
-            Optim.Options(g_tol=1e-5, iterations=1_000_000)
-        )
-        # result = optimize(
-        #     x -> objectiveDensity(x, m0, p),
-        #     gprev,
-        #     Optim.Options(g_tol=1e-5, iterations=1_000_000)
-        # )
-        gest = Optim.minimizer(result)
-        densityOut = Optim.minimum(result)
-        if Optim.converged(result) == false
-            @error "Optimizer failed to get distributional parameters"
-            @show m0
+        m1 = zero(m0)
+        g1 = zero(m0)
+        for aidx = 1:na
+            result = optimize(
+                x -> objectiveDensity(x, m0[:, aidx], p),
+                (G,x) -> getDensityG!(G, x, m0[:, aidx], p),
+                gprev[:, aidx],
+                LBFGS()
+            )
+            gprev[:,aidx] = Optim.minimizer(result)
+            densityOut = Optim.minimum(result)
+            if Optim.converged(result) == false
+                @show m0
+                @error "Optimizer failed to get distributional parameters"
+            end
+            g0[aidx] = 1.0 / densityOut
         end
-        g0 = 1.0 / densityOut
 
-        # iterate LOM
-        m1 = iterateDist(g0, gest, m0, polp, pollamb, params, 0.0, 1.0, 1.0)
+        m1 = iterateDist(g0, gprev, m0, polp, pollamb, params, 0.0)
+        @show m1
+        g1 = gprev
+
         error = maximum(abs.(m1 - m0))
         m0 = dampening * m1 + (1.0 - dampening) * m0
         iter += 1
-        gprev = gest
+        gprev = g1
 
         if ((iter==1) || (mod(iter, printinterval) == 0)) & printinfo
             println("Parametrized Dist iterations: $iter, Error $error")
@@ -855,24 +740,26 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     end
 
     # get the parameters for final output
-    result = optimize(
-        x -> objectiveDensity(x, m0, p),
-        (G,x) -> getDensityG!(G, x, m0, p),
-        gprev,
-        LBFGS(),
-        Optim.Options(g_tol=1e-5, iterations=1_000_000)
-    )
-    gest = Optim.minimizer(result)
-    # H = ForwardDiff.hessian(x -> objectiveDensity(x, m0, p), gest)
-    # evals = eigvals(H)
-    # conditionnumber = maximum(evals) / minimum(evals)
-    # if abs(conditionnumber) > 1.0
-    #     @warn "Condition number is large, parametric distribuiton estimates is probably not well defined"
-    # end
-    densityOut = Optim.minimum(result)
-    g0 = 1.0 / densityOut
+    @show m0
+    gout = zero(m0)
+    g0out = zeros(na)
+    for aidx = 1:na
+        result = optimize(
+            x -> objectiveDensity(x, m0[:, aidx], p),
+            (G,x) -> getDensityG!(G, x, m0[:, aidx], p),
+            gprev[:, aidx],
+            LBFGS()
+        )
+        gest = Optim.minimizer(result)
+        densityOut = Optim.minimum(result)
+        g0 = 1.0 / densityOut
+        @show gest
 
-    return m0, g0, gest
+        gout[:, aidx] = gest
+        g0out[aidx] = g0
+    end
+
+    return m0, g0out, gout
 
 
 end
@@ -883,7 +770,7 @@ x = [w , y]
 function equilibriumResidual(x, p)
 
     @unpack np, na, plo, phi, pgrid, agrid, ng, 
-        nquad, xquad, wquad, ngh, xgh, wgh, ρ, σ, nparams = p
+        ρ, σ = p
     
     alo = minimum(agrid)
     ahi = maximum(agrid)
