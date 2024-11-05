@@ -25,7 +25,7 @@ param_gen = @with_kw (
     ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
     m =  2, # tauchen grid distance
-    na = 5, #number of grids in shock
+    na = 10, #number of grids in shock
     np = 20, # number of price grids
     npdense = 50, # number of price grids
     γ = 0.05, # learning rte for equilibrium
@@ -41,15 +41,15 @@ param_gen = @with_kw (
     w_flex = flexsoln[3],
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
-    plo = 0.1*pflex,
-    phi = 5.0*pflex,
+    plo = 0.2*pflex,
+    phi = 3.5*pflex,
     pgrid = exp.(range(log(plo), log(phi), length=np)),
     pgrid_dense = exp.(range(log(plo), log(phi), length=npdense)),
     ρ_agg = 0.9,
     ng = 5,
     # quadrature stuff for winberry
     dampening = 0.1,
-    nsimp = 10
+    nsimp = 100
 )
 p = param_gen(ng=2)
 
@@ -61,8 +61,36 @@ v1, Vadjust, Vnoadjust, polp, pollamb, iter, err  = viterFirm(agg, p; maxiter=10
 pollamb_dense = makedense(Vadjust, Vnoadjust, p, agg)
 
 # get joint distribution of prices and shocks
-moments, g0, g = genJointDist(polp, pollamb_dense, p; printinfo=false);
+moments, g0, g, omega1, omega1hat = genJointDist(polp, pollamb_dense, p);
 
+## ploting policies
+plot(p.agrid, polp)
+
+heatmap(pollamb_dense)
+
+## plots of joint distribution
+jointdist = zeros(p.npdense, p.na)
+for pidx = 1:p.npdense
+    for aidx=1:p.na
+        pval = p.pgrid_dense[pidx]
+        g0_i = g0[aidx]
+        g_i = g[:, aidx]
+        moments_i = moments[:, aidx]
+        
+        jointdist[pidx, aidx] = getDensity(pval, moments_i, g_i, g0_i, p)
+    end
+end
+
+plot(p.pgrid_dense, jointdist[:, 1], label="A lo", title="P dist")
+plot!(p.pgrid_dense, jointdist[:, Int(end/2 - 1)], label="A mid", title="P dist")
+plot!(p.pgrid_dense, jointdist[:, end], label="A high", title="P dist")
+
+savefig("ss_dist.pdf")
+
+## Plotting discretized dists
+plot(p.pgrid_dense, omega1hat[:, 1], label="A lo", title="P dist")
+plot!(p.pgrid_dense, omega1hat[:, 3], label="A mid", title="P dist")
+plot!(p.pgrid_dense, omega1hat[:, 5], label="A high", title="P dist")
 
 ## Testing parametrization
 m0 = rand(p.ng)

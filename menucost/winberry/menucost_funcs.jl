@@ -432,13 +432,12 @@ function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
             # non adjusters
             pval0 = params.pgrid_dense[pidx]
             pval = pval0 / (1.0 + infl)
-            aval =  params.agrid[aidx]
-            if pval > params.plo && pval < params.phi
-                pidx_vals = searchsorted(params.pgrid_dense, pval)
-                pidx_lo = last(pidx_vals)
-                pidx_hi = pidx_lo + 1
-                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
+            pidx_vals = searchsorted(params.pgrid_dense, pval)
+            pidx_lo = last(pidx_vals)
+            pidx_hi = pidx_lo + 1
+            if pidx_hi < params.npdense && pidx_lo > 1
 
+                total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
                 wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
                 wt_lo = min(1.0, max(0.0, wt_lo))
                 wt_hi = 1 - wt_lo
@@ -447,11 +446,11 @@ function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
                 omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
                 
 
-            elseif pval <= params.plo
+            elseif pidx_lo <= 1
 
                 omega1[1, aidx] = omega1[1, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
 
-            elseif pval >= params.phi
+            elseif pidx_hi >= params.npdense
 
                 omega1[end, aidx] = omega1[end, aidx] +  (1.0 - pollamb[pidx, aidx]) * omega1hat[pidx, aidx];
 
@@ -460,10 +459,10 @@ function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
             # adjusters
             pval0 = params.pgrid_dense[pidx]
             pval = polp[aidx]
-            if pval > params.plo && pval < params.phi
-                pidx_vals = searchsorted(params.pgrid_dense, pval)
-                pidx_lo = last(pidx_vals)
-                pidx_hi = pidx_lo + 1
+            pidx_vals = searchsorted(params.pgrid_dense, pval)
+            pidx_lo = last(pidx_vals)
+            pidx_hi = pidx_lo + 1
+            if pidx_hi < params.npdense && pidx_lo > 1
                 total_dist = params.pgrid_dense[pidx_hi] - params.pgrid_dense[pidx_lo]
 
                 wt_lo = 1.0 - (pval - params.pgrid_dense[pidx_lo])/total_dist
@@ -473,11 +472,11 @@ function Tfunc_general(omega0, polp, pollamb, params, infl, Z)
                 omega1[pidx_hi, aidx] = omega1[pidx_hi, aidx] + wt_hi * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
                 omega1[pidx_lo, aidx] = omega1[pidx_lo, aidx] + wt_lo * pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval <= params.plo
+            elseif pidx_lo <= 1
 
                 omega1[1, aidx] = omega1[1, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
-            elseif pval >= params.phi
+            elseif pidx_hi >= params.npdense
 
                 omega1[end, aidx] = omega1[end, aidx] + pollamb[pidx, aidx] * omega1hat[pidx, aidx];
 
@@ -578,7 +577,7 @@ the distribution parameters and the starting moments
 function iterateDist(g0, g, m0, polp, pollamb, params, infl)
 
     @unpack np, na, plo, phi, pgrid, pgrid_dense, agrid, ng, 
-        aP, ρ, σ, nsimp  = params
+        aP, ρ, σ, nsimp, aPstationary  = params
 
     m1 = zero(m0)
 
@@ -589,47 +588,47 @@ function iterateDist(g0, g, m0, polp, pollamb, params, infl)
     # for each moment
     # first moment
     for a1idx = 1:na
-        function inner_integral(pval)
+        function inner_integral(pval, a1idx)
             mout = 0.0
             for aidx = 1:na
 
                 aval = agrid[aidx]
                 densityP = getDensity(pval, m0[:, aidx], g[:, aidx], g0[aidx], params)
 
-                pval_nearest = findnearest(pgrid_dense, pval)
-                pchange = pollamb[pval_nearest][1]
+                pval_nearest = findnearest(pgrid_dense, pval)[1]
+                pchange = pollamb[pval_nearest, aidx]
                 density = densityP * aP[aidx, a1idx]
 
                 p1val = pchange * polp_f(aval) + (1.0 - pchange) * pval/(1.0 + infl)
 
-                mout += p1val * density * p1val
+                mout += p1val * density
             end
             return mout
         end
 
-        m1[1, a1idx] = simps(inner_integral, plo, phi, nsimp)
+        m1[1, a1idx] = simps(p -> inner_integral(p, a1idx), plo, phi, nsimp)
 
         # for higher moments
         for j = 2:ng
-            function inner_integral(pval,j)
+            function inner_integral(pval,j,a1idx)
                 mout = 0.0
                 for aidx = 1:na
 
                     densityP = getDensity(pval, m0[:, aidx], g[:, aidx], g0[aidx], params)
                     aval = agrid[aidx]
-                    pval_nearest = findnearest(pgrid_dense, pval)
-                    pchange = pollamb[pval_nearest][1]
+                    pval_nearest = findnearest(pgrid_dense, pval)[1]
+                    pchange = pollamb[pval_nearest, aidx]
 
                     density = densityP * aP[aidx, a1idx]
 
                     p1val = pchange * polp_f(aval) + (1.0 - pchange) * pval/(1.0 + infl)
 
-                    mout += ((p1val - m1[1,a1idx])^j) * density * p1val
+                    mout += ((p1val - m1[1,a1idx])^j) * density
 
                 end
                 return mout
             end
-            m1[j, a1idx] = simps(p -> inner_integral(p, j), plo, phi, nsimp)
+            m1[j, a1idx] = simps(p -> inner_integral(p,j,a1idx), plo, phi, nsimp)
 
         end
     end
@@ -717,10 +716,11 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
                 @error "Optimizer failed to get distributional parameters"
             end
             g0[aidx] = 1.0 / densityOut
+            @show m0
+            @show g0
         end
 
         m1 = iterateDist(g0, gprev, m0, polp, pollamb, params, 0.0)
-        @show m1
         g1 = gprev
 
         error = maximum(abs.(m1 - m0))
@@ -740,7 +740,6 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     end
 
     # get the parameters for final output
-    @show m0
     gout = zero(m0)
     g0out = zeros(na)
     for aidx = 1:na
@@ -753,13 +752,12 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
         gest = Optim.minimizer(result)
         densityOut = Optim.minimum(result)
         g0 = 1.0 / densityOut
-        @show gest
 
         gout[:, aidx] = gest
         g0out[aidx] = g0
     end
 
-    return m0, g0out, gout
+    return m0, g0out, gout, omega1, omega1hat
 
 
 end

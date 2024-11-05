@@ -30,7 +30,8 @@ paramgen = @with_kw (
     npdense = 50, # number of price grids on histogram
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
-    shock = tauchen(na, ρ, σ, 0.0, m),
+    # shock = tauchen(na, ρ, σ, 0.0, m),
+    shock = rouwenhorst(na, ρ, σ, 0.0),
     aP = shock.p,
     aPstationary = findStationary(aP),
     agrid = shock.state_values,
@@ -41,8 +42,8 @@ paramgen = @with_kw (
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
     pss = pflex,
-    plo = 0.5*pflex,
-    phi = 2.0*pflex,
+    plo = 0.1*pflex,
+    phi = 5.0*pflex,
     pgrid = exp.(range(log(plo), log(phi), length=np)),
     pgrid_dense = range(plo, phi, length=npdense),
     ρ_agg = 0.9
@@ -66,9 +67,12 @@ plot(params.agrid, polp)
 pollamb_dense = makedense(Vadjust1, Vnoadjust1, params, (w=1.0, Y=1.0, A=0.0))
 omegass, omegahatss = genJointDist(polp, pollamb_dense, params)
 
-pdist = sum(omegass, dims=2)
-plot(pdist)
 
+plot(params.pgrid_dense, omegahatss[:, 1], label="A lo", title="P dist")
+plot!(params.pgrid_dense, omegahatss[:, 3], label="A mid", title="P dist")
+plot!(params.pgrid_dense, omegahatss[:, 5], label="A high", title="P dist")
+
+savefig("ss_dist.pdf")
 ## SS Equilibrium
 
 ssresult = optimize(
