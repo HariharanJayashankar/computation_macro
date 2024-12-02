@@ -6,6 +6,8 @@ using FiniteDiff
 using SparseArrays, SparsityDetection
 using Optim
 using BSplineKit
+using ApproxFun
+using FastGaussQuadrature
 
 # find stationary distribution
 # of markov process characterized by
@@ -63,38 +65,6 @@ function flexsoln(ϵ, agrid, aPstationary, ζ, ν )
 end
 
 #==
-T_adjusting_given
-- update value function for adjusting taking as given the policy
-- overwrites V
-==#
-function T_adjust_given!(V, polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
-
-    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ = params
-
-    @inbounds for aidx = 1:na
-        pval = polp[aidx]
-        aval = agg.A .+ agrid[aidx]
-
-        profit = (pval^(1-ϵ) - pval^(-ϵ)*(agg.w/exp(aval))) * agg.Y - κ
-
-        Ex = 0.0
-        @inbounds for a1idx = 1:na
-            vnoadj1_fun = extrapolate(interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
-            vnext = max(vnoadj1_fun(pval), Vadj1[a1idx])
-            Ex += aP[aidx, a1idx] * vnext
-        end
-        
-        valadjust = profit + β * sdf * Ex
-
-        V[aidx] = valadjust
-        
-
-    end
-
-
-end
-
-#==
 Bellman operator for not adjusting
 ==#
 function T_noadjust!(V, Vadj1, Vnoadj1, params ,agg; sdf=1.0, infl = 0.0)
@@ -130,9 +100,12 @@ Bellman operator for adjusting
     - choose optimal policy
     - overwrites polp and v
 ==#
-function T_adjust_max!(V, polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
+function T_adjust!(polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
 
-    @unpack np, na, pgrid, agrid, ϵ, β, aP, κ, plo, phi = params
+    @unpack np, na, pgrid, agrid, ϵ, β, aP, σ, κ, plo, phi, Sad, Snoadj, xgh, wgh, ngh = params
+
+    Vadj1_f = Fun(Sadj, ApproxFun.transform(Sadj, Vadj1));
+    Vnoadj1_f = Fun(Snoadj, ApproxFun.transform(Snoadj, Vadj1));
 
     @inbounds for aidx = 1:na
 
@@ -142,10 +115,10 @@ function T_adjust_max!(V, polp, Vadj1, Vnoadj1, params ,agg; sdf=1.0)
             profit = (p1^(1-ϵ) - p1^(-ϵ)*(agg.w/exp(aval))) * agg.Y - κ
 
             Ex = 0.0
-            @inbounds for a1idx = 1:na
-                vnoadj1_fun = extrapolate(interpolate(pgrid, Vnoadj1[:, a1idx], BSplineOrder(4)), Smooth())
-                vnext = max(vnoadj1_fun(p1), Vadj1[a1idx])
-                Ex += aP[aidx, a1idx] * vnext
+            @inbounds for epsidx = 1:ngh
+                a1val = aval + σ * xgh[epsidx]
+                vnext = max(Vnoadj1_f(p1, a1val), Vadj1_f(a1val)) * wgh
+                Ex += vnext
             end
 
             valadjust =  profit + β * sdf * Ex
