@@ -2,5 +2,6 @@
 
 Notes:
 
-- Nelder mead seems to work but LBFGS doesnt, maybe my gradient is wrong?
-- Need to compare stationary distribution with reiter solution
+- Viter only works with "tight" pgrids , approx 0.5 * pflex to 1.5 * pflex
+- The algorithm for finding the parameters for g only works for wider pgrids, approx 0.1*pflex to 4.0*pflex
+- Have to incorporate both of this
