@@ -42,6 +42,8 @@ param_gen = @with_kw (
     Y_flex = flexsoln[5],
     plo = 0.1*pflex,
     phi = 4.0*pflex,
+    plo_w = 0.1*pflex,
+    phi_w = 4.0*pflex,
     pgrid = range(plo^curv, phi^curv, length=np) .^ (1.0/curv),
     pgrid_dense = range(plo^curv, phi^curv, length=npdense) .^ (1.0/curv),
     ρ_agg = 0.9,
@@ -50,7 +52,7 @@ param_gen = @with_kw (
     dampening = 0.1,
     nsimp = 10
 )
-p = param_gen(ng=2)
+p = param_gen(ng=1)
 ## Does my gradient accruately give the correct value
 m0 = rand(p.ng)
 m0 = m0 / 100
@@ -70,7 +72,8 @@ maximum(abs.(G_fwd - G_manual))
 
 # winberry moments for ng = 2
 m0 = rand(p.ng)
-m0[1] = log(p.phi) / 4.0
+# m0[1] = log(p.phi) / 4.0
+m0[1] = 1.4
 gprev = zeros(p.ng)
 
 result = optimize(

@@ -535,10 +535,10 @@ The amtrix will be
 ==#
 function objectiveDensity(g, m, params)
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp = params
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp, phi_w, plo_w = params
 
     # simpsons quadrature
-    integral = simps(p -> getDensity(p, m, g, 1.0, params), plo, phi, nsimp)
+    integral = simps(p -> getDensity(p, m, g, 1.0, params), plo_w, phi_w, nsimp)
 
     return integral
 
@@ -550,7 +550,7 @@ Get density gradient to help with optimizer
 function getDensityG!(G, x, m, params)
 
 
-    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp = params
+    @unpack plo, phi, pgrid, agrid, np, na, ng, nsimp, plo_w, phi_w = params
 
 
     
@@ -558,12 +558,12 @@ function getDensityG!(G, x, m, params)
     # first two moments
     # need to integrate
     
-    G[1] = simps(p -> (p - m[1]) * getDensity(p, m, x, 1.0, params), plo, phi, nsimp)
+    G[1] = simps(p -> (p - m[1]) * getDensity(p, m, x, 1.0, params), plo_w, phi_w, nsimp)
 
     # rest of the moments
     for i=2:ng
         # need to integrate
-        G[i] = simps(p -> ((p - m[1])^i - m[i]) * getDensity(p, m, x, 1.0, params), plo, phi, nsimp)
+        G[i] = simps(p -> ((p - m[1])^i - m[i]) * getDensity(p, m, x, 1.0, params), plo_w, phi_w, nsimp)
     end
 
 end

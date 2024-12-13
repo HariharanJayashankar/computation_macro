@@ -12,7 +12,7 @@ include("gensysdt.jl")
 
 
 param_gen = @with_kw (
-    curv = 0.1,
+    curv = 0.5,
     β = 0.97^(1/12),
     ζ = 1.0,
     ν = 1.0,
@@ -44,6 +44,8 @@ param_gen = @with_kw (
     Y_flex = flexsoln[5],
     plo = 0.5*pflex,
     phi = 1.5*pflex,
+    plo_w = 0.01*pflex,
+    phi_w =  4.0*pflex,
     pgrid = range(plo^curv, phi^curv, length=np) .^ (1.0/curv),
     pgrid_dense = range(plo^curv, phi^curv, length=npdense) .^ (1.0/curv),
     ρ_agg = 0.9,
@@ -52,7 +54,7 @@ param_gen = @with_kw (
     dampening = 0.1,
     nsimp = 10
 )
-p = param_gen(ng=2)
+p = param_gen(ng=1, dampening=1.0)
 
 ## does iterateDist work fine?
 
@@ -62,7 +64,7 @@ v1, Vadjust, Vnoadjust, polp, pollamb, iter, err  = viterFirm(agg, p; maxiter=20
 pollamb_dense = makedense(Vadjust, Vnoadjust, p, agg)
 
 # get joint distribution of prices and shocks
-moments, g0, g, omega1, omega1hat = genJointDist(polp, pollamb_dense, p);
+moments, g0, g, omega1, omega1hat = genJointDist(polp, pollamb_dense, p, printinterval=5);
 
 ## ploting policies
 plot(p.agrid, polp)
