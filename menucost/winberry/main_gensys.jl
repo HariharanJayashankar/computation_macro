@@ -12,6 +12,7 @@ include("gensysdt.jl")
 
 
 param_gen = @with_kw (
+    curv = 0.1,
     β = 0.97^(1/12),
     ζ = 1.0,
     ν = 1.0,
@@ -25,13 +26,13 @@ param_gen = @with_kw (
     ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
     m =  2, # tauchen grid distance
-    na = 10, #number of grids in shock
+    na = 5, #number of grids in shock
     np = 20, # number of price grids
     npdense = 50, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
-    # shock = tauchen(na, ρ, σ, 0.0, m),
-    shock = rouwenhorst(na, ρ, σ, 0.0),
+    shock = tauchen(na, ρ, σ, 0.0, m),
+    # shock = rouwenhorst(na, ρ, σ, 0.0),
     aP = shock.p,
     aPstationary = findStationary(aP),
     agrid = shock.state_values,
@@ -41,22 +42,22 @@ param_gen = @with_kw (
     w_flex = flexsoln[3],
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
-    plo = 0.2*pflex,
-    phi = 3.5*pflex,
-    pgrid = exp.(range(log(plo), log(phi), length=np)),
-    pgrid_dense = exp.(range(log(plo), log(phi), length=npdense)),
+    plo = 0.5*pflex,
+    phi = 1.5*pflex,
+    pgrid = range(plo^curv, phi^curv, length=np) .^ (1.0/curv),
+    pgrid_dense = range(plo^curv, phi^curv, length=npdense) .^ (1.0/curv),
     ρ_agg = 0.9,
     ng = 5,
     # quadrature stuff for winberry
     dampening = 0.1,
-    nsimp = 100
+    nsimp = 10
 )
 p = param_gen(ng=2)
 
 ## does iterateDist work fine?
 
 agg = (w=1.0, Y=1.0, A=0.0);
-v1, Vadjust, Vnoadjust, polp, pollamb, iter, err  = viterFirm(agg, p; maxiter=10000, tol=1e-6)
+v1, Vadjust, Vnoadjust, polp, pollamb, iter, err  = viterFirm(agg, p; maxiter=200, tol=1e-6)
 
 pollamb_dense = makedense(Vadjust, Vnoadjust, p, agg)
 

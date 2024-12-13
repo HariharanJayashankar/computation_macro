@@ -2,13 +2,15 @@ using MKL
 using Plots
 using JLD2
 
-include("menucost_funcs.jl")
-include("gensysdt.jl")
-
 # read jacobians
 read_jacob = false
 
-params = @with_kw (
+include("menucost_funcs.jl")
+include("gensysdt.jl")
+
+
+param_gen = @with_kw (
+    curv = 0.5,
     β = 0.97^(1/12),
     ζ = 1.0,
     ν = 1.0,
@@ -21,12 +23,14 @@ params = @with_kw (
     ϕ_infl = 1.2, # talor rule infl
     ϕ_output = 0.5, # taylor rule output
     # otehr parameters (numeric mostly)
-    m =  3, # tauchen grid distance
+    m =  2, # tauchen grid distance
     na = 10, #number of grids in shock
-    np = 200, # number of price grids
+    np = 20, # number of price grids
+    npdense = 50, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
-    shock = tauchen(na, ρ, σ, 0.0, m),
+    # shock = tauchen(na, ρ, σ, 0.0, m),
+    shock = rouwenhorst(na, ρ, σ, 0.0),
     aP = shock.p,
     aPstationary = findStationary(aP),
     agrid = shock.state_values,
@@ -36,27 +40,17 @@ params = @with_kw (
     w_flex = flexsoln[3],
     L_flex = flexsoln[4],
     Y_flex = flexsoln[5],
-    pss = log.(pflex),
-    plo = 0.5*pflex,
-    phi = 2.0*pflex,
-    pgrid = range(plo, phi, length=np),
+    plo = 0.1*pflex,
+    phi = 4.0*pflex,
+    pgrid = range(plo^curv, phi^curv, length=np) .^ (1.0/curv),
+    pgrid_dense = range(plo^curv, phi^curv, length=npdense) .^ (1.0/curv),
     ρ_agg = 0.9,
-    ng = 2,
-    nparams = 2 + sum([(i+1 for i=2:ng)...]),
-    nquad = 10,
-    ngh=3,
+    ng = 5,
     # quadrature stuff for winberry
-    quadrature_out = gausslegendre(nquad),
-    xquad = quadrature_out[1],
-    wquad = quadrature_out[2],
-    # for shocks
-    gh_quad_out = gausshermite(ngh; normalize=true),
-    xgh = gh_quad_out[1],
-    wgh = gh_quad_out[2],
-    dampening = 0.01
+    dampening = 0.1,
+    nsimp = 10
 )
-p = params()
-
+p = param_gen(ng=2)
 ## Does my gradient accruately give the correct value
 m0 = rand(p.ng)
 m0 = m0 / 100
@@ -95,7 +89,9 @@ conditionnumber = maximum(evals) / minimum(evals)
 
 ## reconstructing moments using the parameters
 
-pmean = simps(x -> log(x) * getDensity(x, m0, gest, 1.0/densityOut, p), p.plo, p.phi, p.nsimp)
+pmean = simps(x -> x * getDensity(x, m0, gest, 1.0/densityOut, p), p.plo, p.phi, p.nsimp)
+@show pmean
+@show m0[1]
 # exactly!
 
 

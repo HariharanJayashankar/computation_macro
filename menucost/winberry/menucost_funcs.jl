@@ -673,13 +673,14 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     m0 = zeros(ng, na)
     for aidx = 1:na
         pdist = omega1[:, aidx]
+        pdist = pdist ./ sum(pdist) # sum to one
         m0[1, aidx] = sum(pdist .* pgrid_dense)
 
         for i=2:ng
             inner = 0.0
 
-            for pidx = 1:params.np
-                pval = pgrid[pidx]
+            for pidx = 1:params.npdense
+                pval = pgrid_dense[pidx]
                 inner += (pval - m0[1, aidx])^(i) * pdist[pidx]
             end
 
@@ -691,7 +692,8 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     # == iterate to steady state == #
     error = 10;
     iter = 0;
-    m0 = ones(ng, na) * p.pflex
+    # m0 = ones(ng, na) * p.pflex
+    @show m0
 
     # some initial guesses for g
     # gprev = zeros(ng, na)
