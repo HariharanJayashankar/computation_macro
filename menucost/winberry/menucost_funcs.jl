@@ -641,7 +641,6 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
 
     @unpack na, ng, pgrid, pgrid_dense, agrid, dampening = params
 
-    tol_hist = tol
     # == initial histogram approach to get decent starting moments == #
     omega1 = ones(params.npdense, params.na);
     omega1 = omega1 ./ (params.npdense*params.na);
@@ -649,7 +648,7 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     error = 10;
     iter = 0;
     
-    while (error > tol_hist) && (iter < maxiter)
+    while (error > tol) && (iter < maxiter)
 
         omega0 = omega1
         omega1, omega1hat = Tfunc_general(omega0, polp, pollamb, params, params.Π_star, 1.0)
@@ -692,58 +691,14 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
     # == iterate to steady state == #
     error = 10;
     iter = 0;
-    # m0 = ones(ng, na) * p.pflex
     @show m0
 
     # some initial guesses for g
     # gprev = zeros(ng, na)
     gprev=  ones(ng, na) * -1e-2
     g0 = zeros(na)
-    while (error > tol) && (iter < maxiter)
 
-        # find parameters
-        m1 = zero(m0)
-        g1 = zero(m0)
-        for aidx = 1:na
-            result = optimize(
-                x -> objectiveDensity(x, m0[:, aidx], p),
-                (G,x) -> getDensityG!(G, x, m0[:, aidx], p),
-                gprev[:, aidx],
-                LBFGS()
-            )
-            gprev[:,aidx] = Optim.minimizer(result)
-            densityOut = Optim.minimum(result)
-            if Optim.converged(result) == false
-                @show m0
-                @error "Optimizer failed to get distributional parameters"
-            end
-            g0[aidx] = 1.0 / densityOut
-            @show m0
-            @show g0
-        end
-
-        m1 = iterateDist(g0, gprev, m0, polp, pollamb, params, 0.0)
-        g1 = gprev
-
-        error = maximum(abs.(m1 - m0))
-        m0 = dampening * m1 + (1.0 - dampening) * m0
-        iter += 1
-        gprev = g1
-
-        if ((iter==1) || (mod(iter, printinterval) == 0)) & printinfo
-            println("Parametrized Dist iterations: $iter, Error $error")
-        end
-
-
-    end
-
-    if printinfo
-        println("Final Parametrized Dist Iterations: $iter, Final error: $error")
-    end
-
-    # get the parameters for final output
-    gout = zero(m0)
-    g0out = zeros(na)
+    # find parameters
     for aidx = 1:na
         result = optimize(
             x -> objectiveDensity(x, m0[:, aidx], p),
@@ -751,15 +706,19 @@ function genJointDist(polp, pollamb, params; maxiter=1000, tol=1e-6, printinterv
             gprev[:, aidx],
             LBFGS()
         )
-        gest = Optim.minimizer(result)
+        gprev[:,aidx] = Optim.minimizer(result)
         densityOut = Optim.minimum(result)
-        g0 = 1.0 / densityOut
-
-        gout[:, aidx] = gest
-        g0out[aidx] = g0
+        if Optim.converged(result) == false
+            @show m0
+            @error "Optimizer failed to get distributional parameters"
+        end
+        g0[aidx] = 1.0 / densityOut
+        @show m0
+        @show g0
     end
 
-    return m0, g0out, gout, omega1, omega1hat
+
+    return m0, g0, gprev, omega1, omega1hat
 
 
 end

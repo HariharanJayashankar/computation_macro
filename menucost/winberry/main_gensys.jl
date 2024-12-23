@@ -27,7 +27,7 @@ param_gen = @with_kw (
     # otehr parameters (numeric mostly)
     m =  2, # tauchen grid distance
     na = 5, #number of grids in shock
-    np = 20, # number of price grids
+    np = 30, # number of price grids
     npdense = 50, # number of price grids
     γ = 0.05, # learning rte for equilibrium
     # getting shock grid
@@ -85,15 +85,15 @@ for pidx = 1:p.npdense
 end
 
 plot(p.pgrid_dense, jointdist[:, 1], label="A lo", title="P dist")
-plot!(p.pgrid_dense, jointdist[:, Int(end/2 - 1)], label="A mid", title="P dist")
+plot!(p.pgrid_dense, jointdist[:, Int(round(end/2))], label="A mid", title="P dist")
 plot!(p.pgrid_dense, jointdist[:, end], label="A high", title="P dist")
 
 savefig("ss_dist.pdf")
 
 ## Plotting discretized dists
 plot(p.pgrid_dense, omega1hat[:, 1], label="A lo", title="P dist")
-plot!(p.pgrid_dense, omega1hat[:, 3], label="A mid", title="P dist")
-plot!(p.pgrid_dense, omega1hat[:, 5], label="A high", title="P dist")
+plot!(p.pgrid_dense, omega1hat[:, 5], label="A mid", title="P dist")
+plot!(p.pgrid_dense, omega1hat[:, 10], label="A high", title="P dist")
 
 ## Testing parametrization
 m0 = rand(p.ng)
