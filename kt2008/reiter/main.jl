@@ -6,8 +6,8 @@ using MKL
 using Plots
 using Optim
 
-include("ktmod.jl")
-include("gensysdt.jl")
+include("kt2008/reiter/ktmod.jl")
+include("kt2008/reiter/gensysdt.jl")
 
 # testing firm problem
 params = paramgen(kmin=0.1, kmax=4.0, nk=10, nkdense=50)
@@ -52,7 +52,7 @@ sizedist = params.nkdense * params.nz
 xss = [
     Vadjust...,
     Vnoadjust...,
-    kpol[1, :]...,
+    # kpol[1, :]...,
     omegass...,
     pss,
     Yss,

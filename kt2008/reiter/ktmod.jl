@@ -631,19 +631,20 @@ function Fsys(Xl, X, η, ϵ, params)
     Vadj = reshape(X[1:sizev], nk, nz)
     Vnoadj_l = reshape(Xl[sizev+1:2*sizev], nk, nz)
     Vnoadj = reshape(X[sizev+1:2*sizev], nk, nz)
-    kpol_l = repeat(Xl[(2*sizev+1):(2*sizev + nz)]', nk, 1)
-    kpol = repeat(X[(2*sizev+1):(2*sizev + nz)]', nk, 1)
-    omega_l = reshape(Xl[(2*sizev + nz+ 1):(2*sizev + nz+ sizedist)], nkdense, nz)
-    omega = reshape(X[(2*sizev + nz+ 1):(2*sizev + nz+ sizedist)], nkdense, nz)
+    # kpol_l = repeat(Xl[(2*sizev+1):(2*sizev + nz)]', nk, 1)
+    # kpol = repeat(X[(2*sizev+1):(2*sizev + nz)]', nk, 1)
+    omega_l = reshape(Xl[(2*sizev+1):(2*sizev + sizedist)], nkdense, nz)
+    omega = reshape(X[(2*sizev + 1):(2*sizev + sizedist)], nkdense, nz)
 
     # unpacking aggregates
-    pl, Yl, Il, Nl, Al = Xl[(2*sizev + nz+ sizedist +1):end]
-    p, Y, I, N, A = X[(2*sizev + nz+ sizedist +1):end]
+    pl, Yl, Il, Nl, Al = Xl[(2*sizev + sizedist +1):end]
+    p, Y, I, N, A = X[(2*sizev + sizedist +1):end]
 
     # == unpack endogenous exepctation errors
     η_vadj = reshape(η[1:sizev], nk, nz)
     η_vnoadj = reshape(η[sizev+1:2*sizev], nk, nz)
     η_kpol =η[2*sizev+1:end]
+    η_kpol = repeat(η_kpol, 1, nk)'
 
     # shock
     epaA = ϵ[1]
@@ -654,23 +655,25 @@ function Fsys(Xl, X, η, ϵ, params)
     # Backwards V iter
     Vadj_l_check = zero(Vadj_l)
     Vnoadj_l_check = zero(Vnoadj_l)
+    kpol_l = zero(Vadj_l)
     V1, xibar_mat = getVout(Vadj, Vnoadj, params)
-    T_adjust_given!(Vadj_l_check, kpol_l, V1, V1, params, agg)
+    T_adjust_max!(Vadj_l_check, kpol_l, V1, V1, params, agg)
     T_noadjust!(Vnoadj_l_check, V1, V1, params, agg)
     Vadj_l_check += η_vadj
     Vnoadj_l_check += η_vnoadj
+    kpol_l += η_kpol
 
     # policy func error
-    kpol_error = zeros(eltype(X), nz)
-    for zi = 1:nz
-        Ex = 0.0
-        kstar = kpol_l[1, zi]
-        for z1i = 1:nz
-            vprimeinter = Derivative(1) * extrapolate(interpolate(kgrid, V1[:, z1i], BSplineOrder(4)), Smooth())
-            Ex +=  zP[zi, z1i] * vprimeinter(kstar)
-        end
-        kpol_error[zi] = pl - beta*Ex + η_kpol[zi]
-    end
+    # kpol_error = zeros(eltype(X), nz)
+    # for zi = 1:nz
+    #     Ex = 0.0
+    #     kstar = kpol_l[1, zi]
+    #     for z1i = 1:nz
+    #         vprimeinter = Derivative(1) * extrapolate(interpolate(kgrid, V1[:, z1i], BSplineOrder(4)), Smooth())
+    #         Ex +=  zP[zi, z1i] * vprimeinter(kstar)
+    #     end
+    #     kpol_error[zi] = pl - beta*Ex + η_kpol[zi]
+    # end
 
     # get xipol_l dense by interpolating value functions
     xipol_l_dense = zeros(eltype(X), nkdense, nz)
@@ -733,9 +736,9 @@ function Fsys(Xl, X, η, ϵ, params)
 
     residual[1:sizev] = vec(Vadj_l) - vec(Vadj_l_check)
     residual[sizev+1:2*sizev] = vec(Vnoadj_l) - vec(Vnoadj_l_check)
-    residual[2*sizev+1:2*sizev+nz] = vec(kpol_error)
-    residual[2*sizev+nz+1:2*sizev+nz+sizedist] = vec(omega_check - omega)
-    residual[2*sizev+nz+sizedist+1:end] = [
+    # residual[2*sizev+1:2*sizev+nz] = vec(kpol_error)
+    residual[2*sizev+1:2*sizev+sizedist] = vec(omega_check - omega)
+    residual[2*sizev+sizedist+1:end] = [
         1/pl - Cagg,
         Yl - Yagg,
         Il - Iagg,
